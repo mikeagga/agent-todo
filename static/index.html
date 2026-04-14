@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Todo Dashboard</title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --surface2: #252525;
+    --border: #333;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --accent: #6c9fff;
+    --green: #4caf50;
+    --red: #ef5350;
+    --yellow: #ffc107;
+    --orange: #ff9800;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 20px; color: var(--accent); }
+  h2 { font-size: 1.1rem; margin-bottom: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; font-weight: 500; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .card.full-width { grid-column: 1 / -1; }
+
+  /* Todo items */
+  .item {
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    transition: opacity 0.2s;
+  }
+  .item.done { opacity: 0.4; }
+  .item.done .item-title { text-decoration: line-through; }
+  .item-content { flex: 1; min-width: 0; }
+  .item-title { font-weight: 600; margin-bottom: 2px; }
+  .item-meta { font-size: 0.8rem; color: var(--text-dim); }
+  .item-desc { font-size: 0.85rem; color: var(--text-dim); margin-top: 4px; }
+
+  .priority-dot {
+    width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0;
+  }
+  .priority-high { background: var(--red); }
+  .priority-medium { background: var(--yellow); }
+  .priority-low { background: var(--green); }
+
+  .actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .btn {
+    border: none; border-radius: 6px; padding: 6px 10px; cursor: pointer;
+    font-size: 0.75rem; transition: background 0.15s;
+  }
+  .btn-done { background: var(--green); color: #fff; }
+  .btn-done:hover { background: #66bb6a; }
+  .btn-del { background: var(--red); color: #fff; }
+  .btn-del:hover { background: #e57373; }
+  .btn-edit { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .btn-edit:hover { background: var(--border); }
+  .btn-primary { background: var(--accent); color: #fff; padding: 8px 16px; font-size: 0.85rem; }
+  .btn-primary:hover { background: #5a8de6; }
+
+  /* Forms */
+  .add-form { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .add-form input, .add-form select {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; color: var(--text); font-size: 0.85rem;
+  }
+  .add-form input { flex: 1; min-width: 150px; }
+  .add-form input:focus, .add-form select:focus { outline: none; border-color: var(--accent); }
+
+  /* Edit modal */
+  .modal-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px; width: 90%; max-width: 450px;
+  }
+  .modal h3 { margin-bottom: 16px; }
+  .modal label { display: block; font-size: 0.8rem; color: var(--text-dim); margin: 10px 0 4px; }
+  .modal input, .modal select {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; color: var(--text); font-size: 0.85rem;
+  }
+  .modal-actions { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
+
+  .empty { color: var(--text-dim); font-size: 0.85rem; font-style: italic; padding: 12px 0; }
+
+  /* Reminder badges */
+  .reminder-badge {
+    display: inline-block; background: var(--accent); color: #fff; font-size: 0.7rem;
+    padding: 2px 6px; border-radius: 4px; margin-left: 6px;
+  }
+
+  /* Status filter tabs */
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tab {
+    padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim);
+  }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>📋 Dashboard</h1>
+
+<div class="grid">
+  <!-- Todos -->
+  <div class="card full-width">
+    <h2>📌 Todos</h2>
+    <div class="tabs">
+      <div class="tab active" onclick="setFilter('pending')">Pending</div>
+      <div class="tab" onclick="setFilter('done')">Done</div>
+      <div class="tab" onclick="setFilter(null)">All</div>
+    </div>
+    <form class="add-form" onsubmit="addTodo(event)">
+      <input type="text" id="todo-title" placeholder="New todo..." required>
+      <input type="date" id="todo-due">
+      <select id="todo-priority">
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+        <option value="low">Low</option>
+      </select>
+      <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+    <div id="todo-list"></div>
+  </div>
+
+  <!-- Reminders -->
+  <div class="card">
+    <h2>🔔 Upcoming Reminders</h2>
+    <div id="reminder-list"></div>
+  </div>
+
+  <!-- Ideas -->
+  <div class="card">
+    <h2>💡 Ideas</h2>
+    <form class="add-form" onsubmit="addIdea(event)">
+      <input type="text" id="idea-title" placeholder="New idea..." required>
+      <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+    <div id="idea-list"></div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <h3>Edit Todo</h3>
+    <input type="hidden" id="edit-id">
+    <label>Title</label>
+    <input type="text" id="edit-title">
+    <label>Description</label>
+    <input type="text" id="edit-desc">
+    <label>Due Date</label>
+    <input type="date" id="edit-due">
+    <label>Priority</label>
+    <select id="edit-priority">
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+    </select>
+    <div class="modal-actions">
+      <button class="btn btn-edit" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTodo()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let currentFilter = 'pending';
+let remindersMap = {};  // todo_id -> [reminders]
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  loadTodos();
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  return res.json();
+}
+
+// --- Todos ---
+async function loadTodos() {
+  const params = currentFilter ? `?status=${currentFilter}` : '';
+  const data = await api(`/api/todos${params}`);
+  const el = document.getElementById('todo-list');
+  if (!data.todos.length) { el.innerHTML = '<div class="empty">No todos yet</div>'; return; }
+  el.innerHTML = data.todos.map(t => {
+    const reminders = remindersMap[t.id] || [];
+    const reminderBadges = reminders.map(r => {
+      const d = new Date(r.remind_at);
+      return `<span class="reminder-badge">🔔 ${d.toLocaleDateString('en-US', {month:'short',day:'numeric'})} ${d.toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'})}</span>`;
+    }).join('');
+    return `
+      <div class="item ${t.status === 'done' ? 'done' : ''}">
+        <div class="priority-dot priority-${t.priority}"></div>
+        <div class="item-content">
+          <div class="item-title">${esc(t.title)} ${reminderBadges}</div>
+          <div class="item-meta">
+            ${t.due_date ? '📅 ' + t.due_date : 'No due date'}
+            · #${t.id}
+          </div>
+          ${t.description ? `<div class="item-desc">${esc(t.description)}</div>` : ''}
+        </div>
+        <div class="actions">
+          ${t.status !== 'done' ? `<button class="btn btn-done" onclick="completeTodo(${t.id})">✓</button>` : ''}
+          <button class="btn btn-edit" onclick="editTodo(${t.id}, '${esc(t.title)}', '${esc(t.description||'')}', '${t.due_date||''}', '${t.priority}')">✎</button>
+          <button class="btn btn-del" onclick="deleteTodo(${t.id})">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function addTodo(e) {
+  e.preventDefault();
+  const body = { title: document.getElementById('todo-title').value };
+  const due = document.getElementById('todo-due').value;
+  const pri = document.getElementById('todo-priority').value;
+  if (due) body.due_date = due;
+  if (pri) body.priority = pri;
+  await api('/api/todos', { method: 'POST', body: JSON.stringify(body) });
+  document.getElementById('todo-title').value = '';
+  document.getElementById('todo-due').value = '';
+  loadTodos();
+}
+
+async function completeTodo(id) {
+  await api(`/api/todos/${id}/complete`, { method: 'PUT' });
+  loadAll();
+}
+
+async function deleteTodo(id) {
+  if (!confirm('Delete this todo?')) return;
+  await api(`/api/todos/${id}`, { method: 'DELETE' });
+  loadAll();
+}
+
+function editTodo(id, title, desc, due, pri) {
+  document.getElementById('edit-id').value = id;
+  document.getElementById('edit-title').value = title;
+  document.getElementById('edit-desc').value = desc;
+  document.getElementById('edit-due').value = due;
+  document.getElementById('edit-priority').value = pri;
+  document.getElementById('edit-modal').classList.add('active');
+}
+
+function closeModal() { document.getElementById('edit-modal').classList.remove('active'); }
+
+async function saveTodo() {
+  const id = document.getElementById('edit-id').value;
+  const body = {
+    title: document.getElementById('edit-title').value,
+    description: document.getElementById('edit-desc').value || null,
+    due_date: document.getElementById('edit-due').value || null,
+    priority: document.getElementById('edit-priority').value,
+  };
+  await api(`/api/todos/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+  closeModal();
+  loadTodos();
+}
+
+// --- Reminders ---
+async function loadReminders() {
+  const data = await api('/api/reminders');
+  remindersMap = {};
+  data.reminders.forEach(r => {
+    if (!remindersMap[r.todo_id]) remindersMap[r.todo_id] = [];
+    remindersMap[r.todo_id].push(r);
+  });
+  const el = document.getElementById('reminder-list');
+  if (!data.reminders.length) { el.innerHTML = '<div class="empty">No upcoming reminders</div>'; return; }
+  el.innerHTML = data.reminders.map(r => {
+    const d = new Date(r.remind_at);
+    return `
+      <div class="item">
+        <div class="item-content">
+          <div class="item-title">${esc(r.todo_title)}</div>
+          <div class="item-meta">
+            🔔 ${d.toLocaleDateString('en-US', {weekday:'short',month:'short',day:'numeric'})}
+            at ${d.toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'})}
+            · Reminder #${r.id}
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-del" onclick="cancelReminder(${r.id})">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function cancelReminder(id) {
+  await api(`/api/reminders/${id}`, { method: 'DELETE' });
+  loadAll();
+}
+
+// --- Ideas ---
+async function loadIdeas() {
+  const data = await api('/api/ideas');
+  const el = document.getElementById('idea-list');
+  if (!data.ideas.length) { el.innerHTML = '<div class="empty">No ideas yet — jot something down!</div>'; return; }
+  el.innerHTML = data.ideas.map(i => `
+    <div class="item">
+      <div class="item-content">
+        <div class="item-title">💡 ${esc(i.title)}</div>
+        ${i.category ? `<div class="item-meta">${esc(i.category)}</div>` : ''}
+        ${i.description ? `<div class="item-desc">${esc(i.description)}</div>` : ''}
+      </div>
+      <div class="actions">
+        <button class="btn btn-del" onclick="deleteIdea(${i.id})">✕</button>
+      </div>
+    </div>`).join('');
+}
+
+async function addIdea(e) {
+  e.preventDefault();
+  await api('/api/ideas', {
+    method: 'POST',
+    body: JSON.stringify({ title: document.getElementById('idea-title').value }),
+  });
+  document.getElementById('idea-title').value = '';
+  loadIdeas();
+}
+
+async function deleteIdea(id) {
+  if (!confirm('Delete this idea?')) return;
+  await api(`/api/ideas/${id}`, { method: 'DELETE' });
+  loadIdeas();
+}
+
+// --- Utils ---
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function loadAll() {
+  loadReminders().then(() => loadTodos());
+  loadIdeas();
+}
+
+// Auto-refresh every 30s
+loadAll();
+setInterval(loadAll, 30000);
+</script>
+</body>
+</html>
