@@ -1,414 +1,208 @@
-"""AI Agent — uses OpenAI function calling to interpret natural language and manage todos."""
+"""AI Agent — low-cost two-phase pipeline (Plan -> deterministic Execute)."""
 
+from __future__ import annotations
+
+import hashlib
 import json
 from collections import deque
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
+
 from openai import OpenAI
+
+from app import change_log, service
 from app.config import settings
-from app import service
+from app.plan_executor import PlanExecutionError, execute_plan
+from app.plan_schema import validate_plan
 
 EASTERN = ZoneInfo("America/New_York")
 
 client = OpenAI(api_key=settings.openai_api_key)
 
-# Conversation history — last 20 exchanges (user + assistant + tool calls)
-# Keeps context for "change that", "the one I just added", etc.
-MAX_HISTORY = 40  # 20 exchanges ≈ 40 messages (user + assistant pairs)
+# Keep history short to reduce token usage
+MAX_HISTORY = 12  # user + assistant short exchanges
 conversation_history: deque = deque(maxlen=MAX_HISTORY)
 
-SYSTEM_PROMPT = """You are a personal todo/reminder assistant.
+# very small in-memory idempotency cache for accidental duplicate sends
+RECENT_REQUESTS: dict[str, str] = {}
+MAX_REQUEST_CACHE = 50
 
-Current date/time (US Eastern): {now_eastern}
+PLANNER_PROMPT = """You are a planning assistant for a todo app.
 
-You help the user manage their tasks by interpreting natural language and calling the appropriate functions.
+Return ONLY valid JSON (no markdown) with this shape:
+{
+  "version": "1.0",
+  "needs_clarification": false,
+  "clarification_question": null,
+  "actions": [
+    {
+      "type": "add_todo|edit_todo|complete_todo|delete_todo|add_reminder|cancel_reminder|add_idea|delete_idea|list_todos|list_reminders|list_ideas|get_due_today|get_due_this_week|search_todos|search_ideas|undo_last_change|undo_change|list_change_log",
+      "title": "optional",
+      "description": "optional",
+      "priority": "low|medium|high",
+      "due_date": "YYYY-MM-DD optional",
+      "due_time": "HH:MM optional",
+      "target_todo_id": 123,
+      "target_reminder_id": 123,
+      "target_idea_id": 123,
+      "target_change_id": "uuid",
+      "query": "optional",
+      "status": "pending|done optional",
+      "category": "optional",
+      "limit": 20,
+      "reminders": [
+        {
+          "kind": "absolute|relative_before_due",
+          "remind_at": "YYYY-MM-DDTHH:MM",
+          "offset_minutes_before_due": 60
+        }
+      ]
+    }
+  ]
+}
 
-CRITICAL DATE RULES:
-- All dates are in US Eastern time. Today is {today_eastern} ({day_of_week}).
-- When the user says "tomorrow", that means {today_eastern} + 1 day. "Friday" means the NEXT upcoming Friday from {today_eastern}.
-- ALWAYS convert relative dates to YYYY-MM-DD before calling any function. Double-check your date math.
-- If you're unsure about a date, call get_current_datetime first to confirm.
-- NEVER guess dates — use the date provided above or call get_current_datetime.
-
-REMINDER RULES:
-- When the user says "remind me to X at TIME", create a todo with add_todo FIRST, then use the returned todo ID to create a reminder with add_reminder.
-- remind_at must be in ISO format: YYYY-MM-DDTHH:MM (e.g. 2026-04-15T09:00). Always use Eastern time.
-- A reminder is a notification schedule attached to a todo. Multiple reminders can exist per todo.
-- When listing reminders, show the time and linked todo clearly.
-
-CREATE vs EDIT vs DELETE — CRITICAL RULES:
-- DEFAULT TO CREATING. When in doubt, create a new todo. Do NOT edit an existing todo unless the user clearly refers to it by name/ID and asks to change it.
-- If the user describes a NEW event, task, or obligation (e.g. "I have a presentation on 4/27"), ALWAYS create a new todo — even if they say "add to the todo" or "to the todo, add...". Phrases like "add", "I have", "there's a" signal NEW items.
-- Only use edit_todo when the user EXPLICITLY says "change", "update", "rename", "edit", or "modify" an EXISTING todo, OR refers to a specific todo by ID/name and asks to alter one of its fields.
-- NEVER overwrite an unrelated todo's description/title with new task info. If a todo about "Cams mod report" exists and the user mentions a presentation, those are separate tasks — create a new todo for the presentation.
-- When the user says "to the todo" or "on the todo list", interpret it as "to the todo LIST" (i.e. create), NOT as "edit the most recently mentioned todo."
-- Only use delete_todo when the user says "delete", "remove", "get rid of", or "cancel" a specific todo. Never delete unless explicitly asked.
-- If the user's request is ambiguous (could be create or edit), briefly ASK which they mean before acting. Example: "Should I create a new todo for that, or update an existing one?"
-
-DUPLICATE PREVENTION — CRITICAL RULES:
-- Before calling add_todo, ALWAYS mentally check the conversation history and any recent tool results for existing todos with a similar title or purpose. If one already exists, do NOT create a duplicate.
-- If the user corrects you (e.g. "no, keep X the same, create a new one for Y"), check whether your previous response already created related todos. If it did, REUSE those existing todo IDs instead of creating new duplicates. Clean up any incorrectly modified todos by reverting them.
-- When handling a correction, your plan should be: (1) undo any wrong edits to existing todos, (2) reuse any todos you already created that are still valid, (3) only create NEW todos for things that don't already exist.
-- If you created a todo in a previous turn that matches what the user is now asking for, reference it by ID — don't make another one.
-- When in doubt, call search_todos or list_todos first to see what already exists before creating anything new.
-
-Guidelines:
-- When the user says "add X" without mentioning a reminder time, just use add_todo (no reminder).
-- When the user says "remind me to X at TIME" or "remind me about X tomorrow morning", create the todo AND a reminder.
-- When listing todos, format them cleanly: show title, due date, priority, and ID. No emojis.
-- When the user asks "what's due today/this week", use the appropriate function.
-- If a user wants to complete or delete a todo but doesn't give an ID, search for it first, then confirm which one.
-- Keep responses short and direct. No filler, no cheerfulness, no emojis. Just the information.
-- If the user's message isn't about todos, respond briefly.
-- For priority, default to "medium" unless the user specifies urgency.
-- When the user says "I have an idea", "jot this down", "idea:", or similar, use add_idea — NOT add_todo. Ideas are separate from tasks.
+Rules:
+- Due time is NOT a reminder.
+- Only include reminders[] when user explicitly asks for reminders.
+- If ambiguous between create vs edit, set needs_clarification=true and ask a short question.
+- Prefer creating a new todo unless user clearly asked to edit an existing one.
+- Use IDs when user provides them.
+- Keep actions minimal and correct.
 """
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "add_todo",
-            "description": "Add a new todo/reminder/task. IMPORTANT: Before calling this, check conversation history and existing todos (via search_todos if needed) to avoid creating duplicates.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "The task title/name"},
-                    "description": {"type": "string", "description": "Optional details about the task"},
-                    "due_date": {"type": "string", "description": "Due date in YYYY-MM-DD format"},
-                    "priority": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high"],
-                        "description": "Task priority (default: medium)",
-                    },
-                },
-                "required": ["title"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_todos",
-            "description": "List todos with optional filters for status, date range, and priority",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "done"],
-                        "description": "Filter by status",
-                    },
-                    "due_before": {"type": "string", "description": "Show todos due on or before this date (YYYY-MM-DD)"},
-                    "due_after": {"type": "string", "description": "Show todos due on or after this date (YYYY-MM-DD)"},
-                    "priority": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high"],
-                        "description": "Filter by priority",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "complete_todo",
-            "description": "Mark a todo as done/completed",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "todo_id": {"type": "integer", "description": "The ID of the todo to complete"},
-                },
-                "required": ["todo_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_todo",
-            "description": "Delete a todo permanently",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "todo_id": {"type": "integer", "description": "The ID of the todo to delete"},
-                },
-                "required": ["todo_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_todos",
-            "description": "Search todos by keyword in title or description",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search keyword"},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_datetime",
-            "description": "Get the current date and time in US Eastern timezone. Call this whenever you need to confirm what day/time it is.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_due_today",
-            "description": "Get all pending todos due today",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_due_this_week",
-            "description": "Get all pending todos due this week",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "snooze_todo",
-            "description": "Reschedule/snooze a todo to a new date",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "todo_id": {"type": "integer", "description": "The ID of the todo to snooze"},
-                    "new_due_date": {"type": "string", "description": "New due date (YYYY-MM-DD)"},
-                },
-                "required": ["todo_id", "new_due_date"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "edit_todo",
-            "description": "Edit an existing todo's title, description, due date, or priority",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "todo_id": {"type": "integer", "description": "The ID of the todo to edit"},
-                    "title": {"type": "string", "description": "New title"},
-                    "description": {"type": "string", "description": "New description"},
-                    "due_date": {"type": "string", "description": "New due date (YYYY-MM-DD)"},
-                    "priority": {"type": "string", "enum": ["low", "medium", "high"], "description": "New priority"},
-                },
-                "required": ["todo_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "add_reminder",
-            "description": "Add a reminder notification for an existing todo. The bot will proactively message the user at the specified time.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "todo_id": {"type": "integer", "description": "The ID of the todo to set a reminder for"},
-                    "remind_at": {"type": "string", "description": "When to send the reminder, in ISO format YYYY-MM-DDTHH:MM (Eastern time)"},
-                },
-                "required": ["todo_id", "remind_at"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_reminders",
-            "description": "List upcoming (unsent) reminders, optionally filtered by todo",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "todo_id": {"type": "integer", "description": "Filter reminders for a specific todo"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "cancel_reminder",
-            "description": "Cancel/delete a specific reminder by its ID",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "reminder_id": {"type": "integer", "description": "The ID of the reminder to cancel"},
-                },
-                "required": ["reminder_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "add_idea",
-            "description": "Jot down an idea for later. Not a task — just a thought to capture.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "The idea in brief"},
-                    "description": {"type": "string", "description": "More detail about the idea"},
-                    "category": {"type": "string", "description": "Optional category (e.g. project, app, business, personal)"},
-                },
-                "required": ["title"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_ideas",
-            "description": "List all saved ideas, optionally filtered by category",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string", "description": "Filter by category"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_ideas",
-            "description": "Search ideas by keyword",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search keyword"},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_idea",
-            "description": "Delete an idea",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "idea_id": {"type": "integer", "description": "The ID of the idea to delete"},
-                },
-                "required": ["idea_id"],
-            },
-        },
-    },
-]
 
-# Map function names to actual Python functions
-TOOL_MAP = {
-    "add_todo": service.add_todo,
-    "list_todos": service.list_todos,
-    "complete_todo": service.complete_todo,
-    "delete_todo": service.delete_todo,
-    "search_todos": service.search_todos,
-    "get_current_datetime": service.get_current_datetime,
-    "get_due_today": service.get_due_today,
-    "get_due_this_week": service.get_due_this_week,
-    "snooze_todo": service.snooze_todo,
-    "edit_todo": service.edit_todo,
-    "add_reminder": service.add_reminder,
-    "list_reminders": service.list_reminders,
-    "cancel_reminder": service.cancel_reminder,
-    "add_idea": service.add_idea,
-    "list_ideas": service.list_ideas,
-    "search_ideas": service.search_ideas,
-    "delete_idea": service.delete_idea,
-}
+def _json(raw: str) -> dict[str, Any]:
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {"raw": data}
+    except Exception:
+        return {"raw": raw}
+
+
+def _recent_context() -> dict[str, Any]:
+    todos = _json(service.list_todos(status="pending", priority=None)).get("todos", [])[:10]
+    reminders = _json(service.list_reminders()).get("reminders", [])[:10]
+    changes = _json(service.list_change_log(limit=5)).get("changes", [])[:5]
+
+    return {
+        "pending_todos": [
+            {
+                "id": t.get("id"),
+                "title": t.get("title"),
+                "due_date": t.get("due_date"),
+                "priority": t.get("priority"),
+                "status": t.get("status"),
+            }
+            for t in todos
+        ],
+        "reminders": [
+            {
+                "id": r.get("id"),
+                "todo_id": r.get("todo_id"),
+                "remind_at": r.get("remind_at"),
+            }
+            for r in reminders
+        ],
+        "recent_changes": [
+            {
+                "id": c.get("id"),
+                "status": c.get("status"),
+                "timestamp": c.get("timestamp"),
+            }
+            for c in changes
+        ],
+    }
+
+
+def _cache_key(user_message: str) -> str:
+    normalized = " ".join(user_message.strip().lower().split())
+    now_bucket = datetime.now(EASTERN).strftime("%Y%m%d%H%M")  # 1-minute bucket
+    base = f"{now_bucket}:{normalized}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def _set_cached_reply(key: str, reply: str) -> None:
+    RECENT_REQUESTS[key] = reply
+    if len(RECENT_REQUESTS) > MAX_REQUEST_CACHE:
+        # drop oldest inserted item (dict preserves insertion order in py3.7+)
+        oldest = next(iter(RECENT_REQUESTS))
+        RECENT_REQUESTS.pop(oldest, None)
+
+
+def _plan_with_llm(user_message: str) -> dict[str, Any]:
+    now = datetime.now(EASTERN)
+    now_str = now.strftime("%Y-%m-%d %I:%M %p %Z")
+    history = list(conversation_history)[-6:]
+
+    planner_input = {
+        "current_time_eastern": now_str,
+        "conversation_tail": history,
+        "context": _recent_context(),
+        "user_message": user_message,
+    }
+
+    response = client.chat.completions.create(
+        model=settings.openai_model,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": PLANNER_PROMPT},
+            {"role": "user", "content": json.dumps(planner_input)},
+        ],
+    )
+
+    raw = response.choices[0].message.content or "{}"
+    return _json(raw)
 
 
 async def process_message(user_message: str) -> str:
-    """Process a user message through the AI agent and return the response."""
-    now = datetime.now(EASTERN)
-    today_str = now.date().isoformat()
-    day_of_week = now.strftime("%A")
-    now_str = now.strftime("%Y-%m-%d %I:%M %p %Z")
-    system_prompt = (
-        SYSTEM_PROMPT
-        .replace("{now_eastern}", now_str)
-        .replace("{today_eastern}", today_str)
-        .replace("{day_of_week}", day_of_week)
-    )
-
-    # Build messages: system prompt + conversation history + new user message
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(list(conversation_history))
-    messages.append({"role": "user", "content": user_message})
-
-    # Track new messages from this turn to add to history later
-    new_history_messages = [{"role": "user", "content": user_message}]
-
-    # Loop to handle multiple tool calls if needed
-    for _ in range(5):  # max iterations to prevent infinite loops
-        response = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto",
-        )
-
-        message = response.choices[0].message
-
-        # If no tool calls, return the text response
-        if not message.tool_calls:
-            reply = message.content or "I'm not sure how to help with that."
-            new_history_messages.append({"role": "assistant", "content": reply})
-            # Save this exchange to history
-            for msg in new_history_messages:
-                conversation_history.append(msg)
-            return reply
-
-        # Process each tool call
-        messages.append(message)
-        # Store a simplified version of the assistant tool-call message for history
-        new_history_messages.append({
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                }
-                for tc in message.tool_calls
-            ],
-        })
-
-        for tool_call in message.tool_calls:
-            fn_name = tool_call.function.name
-            fn_args = json.loads(tool_call.function.arguments)
-
-            fn = TOOL_MAP.get(fn_name)
-            if fn:
-                result = fn(**fn_args)
-            else:
-                result = json.dumps({"error": f"Unknown function: {fn_name}"})
-
-            tool_msg = {
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": result,
-            }
-            messages.append(tool_msg)
-            new_history_messages.append(tool_msg)
+    """Process message with two-phase flow: Plan (LLM) -> Execute (deterministic)."""
+    request_key = _cache_key(user_message)
+    if request_key in RECENT_REQUESTS:
+        return RECENT_REQUESTS[request_key]
 
     reply = "Sorry, I had trouble processing that. Please try again."
-    new_history_messages.append({"role": "assistant", "content": reply})
-    for msg in new_history_messages:
-        conversation_history.append(msg)
-    return reply
+    plan: dict[str, Any] = {}
+
+    try:
+        plan = _plan_with_llm(user_message)
+        ok, err = validate_plan(plan)
+        if not ok:
+            reply = f"I couldn't parse that request safely ({err}). Please rephrase with specifics."
+            conversation_history.append({"role": "user", "content": user_message})
+            conversation_history.append({"role": "assistant", "content": reply})
+            _set_cached_reply(request_key, reply)
+            return reply
+
+        if plan.get("needs_clarification"):
+            reply = plan.get("clarification_question") or "Do you want me to create a new item or edit an existing one?"
+            conversation_history.append({"role": "user", "content": user_message})
+            conversation_history.append({"role": "assistant", "content": reply})
+            _set_cached_reply(request_key, reply)
+            return reply
+
+        change_log.start_recording(user_message)
+        notes = None
+        try:
+            reply = execute_plan(plan)
+        except PlanExecutionError as e:
+            notes = str(e)
+            reply = f"I couldn't apply that safely: {e}"
+        except Exception as e:
+            notes = str(e)
+            raise
+        finally:
+            change_log.finalize_recording(plan_json=plan, notes=notes)
+
+        conversation_history.append({"role": "user", "content": user_message})
+        conversation_history.append({"role": "assistant", "content": reply})
+        _set_cached_reply(request_key, reply)
+        return reply
+
+    except Exception as e:
+        fallback = f"Something went wrong while planning this request: {str(e)}"
+        conversation_history.append({"role": "user", "content": user_message})
+        conversation_history.append({"role": "assistant", "content": fallback})
+        _set_cached_reply(request_key, fallback)
+        return fallback

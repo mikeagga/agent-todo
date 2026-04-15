@@ -18,7 +18,7 @@ class Base(DeclarativeBase):
 
 def init_db():
     """Create all tables."""
-    from app.models import Todo, Reminder, Idea  # noqa: F401
+    from app.models import Todo, Reminder, Idea, ChangeLog  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
 

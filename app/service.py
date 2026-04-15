@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import Todo, Reminder, Idea
+from app import change_log as change_log_service
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -368,3 +369,32 @@ def delete_idea(idea_id: int) -> str:
         return json.dumps({"success": True, "deleted": title})
     finally:
         db.close()
+
+
+def list_change_log(limit: int = 20, status: Optional[str] = None) -> str:
+    """List recorded changes (newest first)."""
+    return change_log_service.list_changes(limit=limit, status=status)
+
+
+def undo_change(change_id: str) -> str:
+    """Undo a specific applied change by ID."""
+    result = change_log_service.undo_change(change_id)
+    try:
+        payload = json.loads(result)
+        if payload.get("success"):
+            scheduler_wake_event.set()
+    except Exception:
+        pass
+    return result
+
+
+def undo_last_change() -> str:
+    """Undo the most recent applied change."""
+    result = change_log_service.undo_last_change()
+    try:
+        payload = json.loads(result)
+        if payload.get("success"):
+            scheduler_wake_event.set()
+    except Exception:
+        pass
+    return result

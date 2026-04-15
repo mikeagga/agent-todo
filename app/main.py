@@ -101,6 +101,10 @@ class IdeaCreate(BaseModel):
     category: Optional[str] = None
 
 
+class ChangeUndoRequest(BaseModel):
+    change_id: str
+
+
 # Todos
 @app.get("/api/todos")
 async def api_list_todos(status: Optional[str] = None, priority: Optional[str] = None):
@@ -157,6 +161,22 @@ async def api_add_idea(idea: IdeaCreate):
 @app.delete("/api/ideas/{idea_id}")
 async def api_delete_idea(idea_id: int):
     return json.loads(service.delete_idea(idea_id))
+
+
+# Change log / undo
+@app.get("/api/history")
+async def api_list_history(limit: int = 20, status: Optional[str] = None):
+    return json.loads(service.list_change_log(limit=limit, status=status))
+
+
+@app.post("/api/history/undo")
+async def api_undo_change(req: ChangeUndoRequest):
+    return json.loads(service.undo_change(req.change_id))
+
+
+@app.post("/api/history/undo-last")
+async def api_undo_last_change():
+    return json.loads(service.undo_last_change())
 
 
 # Dashboard

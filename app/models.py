@@ -1,6 +1,7 @@
 from datetime import datetime, date
 from typing import Optional, List
-from sqlalchemy import String, Text, Date, DateTime, Integer, Boolean, ForeignKey
+import uuid
+from sqlalchemy import String, Text, Date, DateTime, Integer, Boolean, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -32,6 +33,7 @@ class Todo(Base):
             "priority": self.priority,
             "status": self.status,
             "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -54,6 +56,7 @@ class Reminder(Base):
             "todo_id": self.todo_id,
             "remind_at": self.remind_at.isoformat(),
             "sent": self.sent,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -73,4 +76,28 @@ class Idea(Base):
             "description": self.description,
             "category": self.category,
             "created_at": self.created_at.isoformat(),
+        }
+
+class ChangeLog(Base):
+    __tablename__ = "change_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    user_message: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    actions_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="applied", nullable=False)
+    undo_of: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("change_log.id"), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "timestamp": self.timestamp.isoformat(),
+            "user_message": self.user_message,
+            "plan_json": self.plan_json,
+            "actions_json": self.actions_json,
+            "status": self.status,
+            "undo_of": self.undo_of,
+            "notes": self.notes,
         }
