@@ -3,12 +3,16 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 from telegram import Update
 from app.config import settings
 from app.database import init_db
@@ -158,5 +162,5 @@ async def api_delete_idea(idea_id: int):
 # Dashboard
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    with open("static/index.html") as f:
+    with open(BASE_DIR / "static" / "index.html") as f:
         return f.read()

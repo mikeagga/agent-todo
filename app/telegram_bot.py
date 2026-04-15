@@ -16,29 +16,26 @@ application = Application.builder().token(settings.telegram_bot_token).build()
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     await update.message.reply_text(
-        "👋 Hey! I'm your personal todo bot.\n\n"
-        "Just message me in natural language:\n"
-        '• "Remind me to buy groceries tomorrow"\n'
-        '• "What\'s due this week?"\n'
-        '• "Mark the groceries task as done"\n'
-        '• "Show all my todos"\n\n'
-        "I'll handle the rest! 🚀"
+        "Todo bot. Send me tasks, reminders, or ideas in plain english.\n\n"
+        "Examples:\n"
+        '- "remind me to buy groceries tomorrow at 9am"\n'
+        '- "what\'s due this week"\n'
+        '- "mark groceries as done"\n'
+        '- "show all my todos"\n'
+        '- "idea: build a sleep tracker app"'
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     await update.message.reply_text(
-        "📋 **What I can do:**\n\n"
-        "• Add tasks with due dates and priorities\n"
-        "• List your pending or completed todos\n"
-        "• Mark tasks as done\n"
-        "• Search for specific tasks\n"
-        "• Snooze/reschedule tasks\n"
-        "• Edit existing tasks\n"
-        "• Tell you what's due today or this week\n\n"
-        "Just talk to me naturally — no special commands needed!",
-        parse_mode="Markdown",
+        "What I can do:\n\n"
+        "- Add/edit/delete todos with due dates and priorities\n"
+        "- Set reminders (I'll message you when they're due)\n"
+        "- List, search, and filter tasks\n"
+        "- Snooze/reschedule tasks\n"
+        "- Save ideas separately from tasks\n\n"
+        "Just type normally. No commands needed.",
     )
 
 
@@ -60,7 +57,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(response)
         except Exception:
             await update.message.reply_text(
-                "⚠️ Something went wrong processing your message. Please try again."
+                "Something went wrong. Try again."
             )
 
 

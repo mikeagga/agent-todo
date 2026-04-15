@@ -4,3 +4,4 @@ sqlalchemy==2.0.36
 openai==1.58.1
 python-telegram-bot==21.9
 pydantic-settings==2.7.1
+tzdata==2024.2

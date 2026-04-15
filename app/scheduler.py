@@ -36,14 +36,14 @@ async def send_reminder_message(bot: Bot, reminder_info: dict) -> None:
         return
 
     title = reminder_info["todo_title"]
-    msg = f"🔔 **Reminder:** {title}"
+    msg = f"Reminder: {title}"
     if reminder_info.get("todo_description"):
-        msg += f"\n📝 {reminder_info['todo_description']}"
+        msg += f"\n{reminder_info['todo_description']}"
     if reminder_info.get("todo_due_date"):
-        msg += f"\n📅 Due: {reminder_info['todo_due_date']}"
+        msg += f"\nDue: {reminder_info['todo_due_date']}"
     priority = reminder_info.get("todo_priority")
     if priority == "high":
-        msg += "\n🔴 High priority"
+        msg += "\nPriority: high"
 
     try:
         await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
