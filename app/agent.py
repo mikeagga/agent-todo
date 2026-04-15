@@ -36,6 +36,22 @@ REMINDER RULES:
 - A reminder is a notification schedule attached to a todo. Multiple reminders can exist per todo.
 - When listing reminders, show the time and linked todo clearly.
 
+CREATE vs EDIT vs DELETE — CRITICAL RULES:
+- DEFAULT TO CREATING. When in doubt, create a new todo. Do NOT edit an existing todo unless the user clearly refers to it by name/ID and asks to change it.
+- If the user describes a NEW event, task, or obligation (e.g. "I have a presentation on 4/27"), ALWAYS create a new todo — even if they say "add to the todo" or "to the todo, add...". Phrases like "add", "I have", "there's a" signal NEW items.
+- Only use edit_todo when the user EXPLICITLY says "change", "update", "rename", "edit", or "modify" an EXISTING todo, OR refers to a specific todo by ID/name and asks to alter one of its fields.
+- NEVER overwrite an unrelated todo's description/title with new task info. If a todo about "Cams mod report" exists and the user mentions a presentation, those are separate tasks — create a new todo for the presentation.
+- When the user says "to the todo" or "on the todo list", interpret it as "to the todo LIST" (i.e. create), NOT as "edit the most recently mentioned todo."
+- Only use delete_todo when the user says "delete", "remove", "get rid of", or "cancel" a specific todo. Never delete unless explicitly asked.
+- If the user's request is ambiguous (could be create or edit), briefly ASK which they mean before acting. Example: "Should I create a new todo for that, or update an existing one?"
+
+DUPLICATE PREVENTION — CRITICAL RULES:
+- Before calling add_todo, ALWAYS mentally check the conversation history and any recent tool results for existing todos with a similar title or purpose. If one already exists, do NOT create a duplicate.
+- If the user corrects you (e.g. "no, keep X the same, create a new one for Y"), check whether your previous response already created related todos. If it did, REUSE those existing todo IDs instead of creating new duplicates. Clean up any incorrectly modified todos by reverting them.
+- When handling a correction, your plan should be: (1) undo any wrong edits to existing todos, (2) reuse any todos you already created that are still valid, (3) only create NEW todos for things that don't already exist.
+- If you created a todo in a previous turn that matches what the user is now asking for, reference it by ID — don't make another one.
+- When in doubt, call search_todos or list_todos first to see what already exists before creating anything new.
+
 Guidelines:
 - When the user says "add X" without mentioning a reminder time, just use add_todo (no reminder).
 - When the user says "remind me to X at TIME" or "remind me about X tomorrow morning", create the todo AND a reminder.
@@ -53,7 +69,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "add_todo",
-            "description": "Add a new todo/reminder/task",
+            "description": "Add a new todo/reminder/task. IMPORTANT: Before calling this, check conversation history and existing todos (via search_todos if needed) to avoid creating duplicates.",
             "parameters": {
                 "type": "object",
                 "properties": {
