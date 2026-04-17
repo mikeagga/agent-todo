@@ -1,0 +1,115 @@
+openapi: 3.1.0
+info:
+  title: Local Todo/Reminder Backbone API
+  version: 0.1.0
+  description: |
+    HTTP protocol contract for future implementation (pi extension + Telegram bot will call this).
+servers:
+  - url: http://localhost:8787
+paths:
+  /v1/todos:
+    post:
+      summary: Add a todo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddTodoInput'
+      responses:
+        '201':
+          description: Created
+    get:
+      summary: List todos
+      parameters:
+        - in: query
+          name: userExternalId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/TodoStatus' }
+      responses:
+        '200':
+          description: OK
+  /v1/todos/{todoId}/complete:
+    post:
+      summary: Complete a todo
+      parameters:
+        - in: path
+          name: todoId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userExternalId]
+              properties:
+                userExternalId:
+                  type: string
+      responses:
+        '200':
+          description: OK
+  /v1/reminders:
+    post:
+      summary: Add a reminder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddReminderInput'
+      responses:
+        '201':
+          description: Created
+  /v1/reminders/due:
+    get:
+      summary: List due reminders
+      parameters:
+        - in: query
+          name: userExternalId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: asOf
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: OK
+components:
+  schemas:
+    Priority:
+      type: string
+      enum: [low, normal, high, urgent]
+    TodoStatus:
+      type: string
+      enum: [open, done, cancelled]
+    AddTodoInput:
+      type: object
+      required: [userExternalId, title]
+      properties:
+        userExternalId: { type: string }
+        title: { type: string }
+        notes: { type: string }
+        dueAt:
+          type: string
+          format: date-time
+        priority:
+          $ref: '#/components/schemas/Priority'
+    AddReminderInput:
+      type: object
+      required: [userExternalId, text, remindAt]
+      properties:
+        userExternalId: { type: string }
+        text: { type: string }
+        remindAt:
+          type: string
+          format: date-time
+        timezone: { type: string }
+        recurrenceRule: { type: string }

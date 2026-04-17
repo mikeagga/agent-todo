@@ -1,68 +1,187 @@
-# Todo Bot 🤖
+# agent-todo backbone (local first)
 
-A personal todo/reminder bot you message via Telegram. An AI agent (GPT-4o-mini) interprets your natural language and manages your tasks in a SQLite database.
+This repo contains the local-first backbone + a project-local pi extension + Telegram relay for your personal todo/reminder project:
 
-## How It Works
+- SQLite schema + migrations
+- strongly typed protocol contracts
+- service layer for todo/reminder/memory primitives
+- project-local pi extension (`.pi/extensions/todo-reminders`)
+- Telegram relay bot (`src/telegram/bot.ts`)
+- no HTTP server yet
 
-```
-You (Telegram) → Webhook → FastAPI Server → AI Agent → SQLite DB → Response back to Telegram
-```
+## Stack
 
-## Setup
+- TypeScript + Node.js
+- SQLite via `better-sqlite3`
+- Zod for protocol validation
 
-### 1. Create a Telegram Bot
-1. Message [@BotFather](https://t.me/BotFather) on Telegram
-2. Send `/newbot` and follow the prompts
-3. Copy the bot token
+## Quick start
 
-### 2. Get an OpenAI API Key
-1. Go to [platform.openai.com](https://platform.openai.com)
-2. Create an API key
-
-### 3. Local Development
 ```bash
-# Clone and install
-pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Edit .env with your tokens
-
-# Run
-uvicorn app.main:app --reload
-
-# In another terminal, use ngrok for webhook testing:
-ngrok http 8000
-# Then set WEBHOOK_URL=https://your-ngrok-url.ngrok.io in .env and restart
+npm install
+npm run db:init
+npm run demo
 ```
 
-### 4. Deploy to Railway
-1. Push to GitHub
-2. Create a new Railway project from the repo
-3. Add a **Volume** mounted at `/app/data` (for SQLite persistence)
-4. Set environment variables:
-   - `TELEGRAM_BOT_TOKEN` — from BotFather
-   - `OPENAI_API_KEY` — from OpenAI
-   - `WEBHOOK_URL` — your Railway app URL (e.g. `https://todo-bot-production.up.railway.app`)
-   - `DATABASE_URL` — `sqlite:////app/data/todos.db` (note: 4 slashes for absolute path)
-5. Deploy!
+## Telegram integration (relay mode: polling or webhook)
 
-## Usage Examples
+Set env vars (in `.env` or shell):
 
-Just message your bot naturally:
+- `TELEGRAM_BOT_TOKEN` (required)
+- `TELEGRAM_ALLOWED_CHAT_ID` (recommended; restricts bot to your chat)
+- `TELEGRAM_MODE` (`polling` default, or `webhook`)
+- `PI_PROVIDER` / `PI_MODEL` (optional; choose provider/model for rpc process)
+- `PI_BIN` (optional; default `pi`)
+- `PI_EXTRA_ARGS` (optional; additional args for `pi --mode rpc`)
 
-- "Remind me to buy groceries tomorrow"
-- "Add a high priority task: finish report by Friday"
-- "What's due this week?"
-- "Show all my todos"
-- "Mark the groceries task as done"
-- "Snooze the report to next Monday"
-- "Delete the groceries task"
-- "Search for anything about meeting"
+For webhook mode also set:
+- `TELEGRAM_WEBHOOK_URL` (public HTTPS URL Telegram should call)
+- `TELEGRAM_WEBHOOK_PATH` (default `/telegram/webhook`)
+- `TELEGRAM_WEBHOOK_SECRET` (optional but recommended)
+- `TELEGRAM_WEBHOOK_HOST` / `TELEGRAM_WEBHOOK_PORT` (local listener, defaults `0.0.0.0:8788`)
 
-## Tech Stack
-- **FastAPI** — web server
-- **python-telegram-bot** — Telegram integration
-- **OpenAI GPT-4o-mini** — natural language understanding
-- **SQLAlchemy + SQLite** — database
-- **Railway** — hosting
+Run:
+
+```bash
+npm run telegram:bot
+```
+
+Behavior:
+- Telegram bot forwards your exact message text to `pi --mode rpc`
+- It waits for the agent response and sends the assistant text back to Telegram
+- No local intent parsing happens in the Telegram layer
+
+Default DB file:
+
+- `data/todo-reminders.db`
+
+You can override with:
+
+```bash
+DB_PATH=/absolute/path/my.db npm run db:init
+```
+
+## What was added
+
+### Database
+
+- `src/db/migrations/001_init.sql`
+  - `users`
+  - `todos`
+  - `reminders`
+  - `schema_migrations`
+- `src/db/migrations/002_link_reminders_todos.sql`
+  - links reminders to todos via `todo_id`
+- `src/db/migrations/003_conversation_memory.sql`
+  - `user_settings` (timezone/defaults/preferences)
+  - `user_memory` (long-term facts/preferences)
+  - `conversation_sessions` (short-term session lifecycle)
+  - `pending_actions` (confirmation/clarification tokens + TTL)
+
+### Protocol contracts (tool/API-friendly)
+
+- `src/protocol/contracts.ts`
+  - `add_todo`
+  - `add_reminder` (supports optional `todoId` link)
+  - `complete_todo`
+  - `cancel_todo`
+  - `list_todos`
+  - `search_todos`
+  - `list_due_reminders`
+  - `list_reminders`
+  - `cancel_reminder`
+- Extension-only tool contract addition in `.pi/extensions/todo-reminders/index.ts`
+  - `add_todo_reminder`
+
+### Future HTTP contract (spec only)
+
+- `src/protocol/openapi.yaml`
+
+### Services
+
+- `TodoService`
+  - addTodo
+  - completeTodo
+  - cancelTodo
+  - listTodos
+  - searchTodos
+  - getTodoById
+- `ReminderService`
+  - addReminder
+  - listDueReminders
+  - listReminders
+  - markReminderSent
+  - cancelReminder
+- `MemoryService`
+  - user settings/memory upsert + reads
+  - conversation session open/touch/close with idle rollover support
+  - pending action token lifecycle (create/read/update/expire)
+
+### Entry point
+
+- `createBackbone()` in `src/index.ts`
+
+## Pi extension (started)
+
+I added a project-local pi extension at:
+
+- `.pi/extensions/todo-reminders/index.ts`
+
+It registers tools:
+
+- `resolve_time_expression` (NL date/time -> ISO UTC)
+- `add_todo`
+- `list_todos`
+- `search_todos` (better for older/history lookup)
+- `complete_todo`
+- `cancel_todo`
+- `add_reminder` (optional `todoId` linkage)
+- `add_todo_reminder` (link reminder directly to a todo, including offset-before-due)
+- `list_due_reminders`
+- `list_reminders` (list all reminders with filters)
+- `cancel_reminder`
+
+and a command:
+
+- `/todo-db-health`
+
+### Use it in pi
+
+From this project directory:
+
+1. Ensure DB is initialized: `npm run db:init`
+2. Start pi in this repo (project-local extensions auto-load)
+3. Run `/reload` if pi was already open
+4. Test with prompts like:
+   - `add a todo to buy eggs tomorrow at 9am`
+   - `show my open todos`
+   - `remind me in 30 minutes to stretch`
+
+Behavior safeguards:
+
+- Destructive actions (`complete_todo`, `cancel_todo`, `cancel_reminder`) are channel-friendly:
+  - they return `responseType: "confirmation_required"` unless `confirmed: true` is passed
+  - responses include `confirmationToken` + `expiresAt` for server-side confirmation tracking
+  - this works in Telegram without CLI/TUI confirmation dialogs
+- Conversation/session lifecycle is automatic:
+  - every input touch checks/rolls over active session by idle timeout
+  - pending actions are auto-expired on each new input
+  - defaults: `SESSION_IDLE_MINUTES=60`, `PENDING_ACTION_TTL_MINUTES=15`
+- Date fields are validated as ISO date-time.
+- Natural-language time can be resolved using `resolve_time_expression` (powered by chrono-node + timezone handling).
+- `add_todo` / `add_reminder` can auto-resolve `timeExpression` when `dueAt`/`remindAt` is not provided.
+- Linked reminders (`todoId`) are automatically cancelled when the todo is completed or cancelled.
+- If a time is ambiguous, tools return a structured clarification payload:
+  - `details.responseType = "clarification"`
+  - `details.needsClarification = true`
+  - `details.question = "..."`
+  This is easier for Telegram relays to forward as a direct follow-up question.
+
+Defaults:
+
+- `userExternalId` defaults to env `TODO_USER_ID` or `local-user`
+- DB path defaults to `data/todo-reminders.db` (override with `DB_PATH`)
+
+## Next recommended step
+
+When you want, I can add a minimal local HTTP API (`/v1/todos`, `/v1/reminders`) on top of this backbone so your future pi extension and Telegram bot both use the same interface.

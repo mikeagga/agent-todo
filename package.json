@@ -1,0 +1,30 @@
+{
+  "name": "agent-todo-backbone",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first todo/reminder backbone (DB + protocol) for future pi extension + Telegram integration",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:init": "tsx src/scripts/init-db.ts",
+    "demo": "tsx src/demo.ts",
+    "telegram:bot": "tsx src/telegram/bot.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "chrono-node": "^2.9.0",
+    "dotenv": "^16.6.1",
+    "luxon": "^3.7.2",
+    "node-telegram-bot-api": "^0.66.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/luxon": "^3.7.1",
+    "@types/node": "^24.6.0",
+    "@types/node-telegram-bot-api": "^0.64.9",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
