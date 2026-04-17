@@ -15,6 +15,13 @@ function isIsoDateTime(value: string): boolean {
   return Number.isFinite(ms);
 }
 
+function formatDisplayDateTime(iso: string, timezone?: string): string {
+  const zone = timezone ?? "UTC";
+  const dt = DateTime.fromISO(iso, { zone: "utc" }).setZone(zone);
+  if (!dt.isValid) return iso;
+  return dt.toFormat("MMM d, yyyy h:mm a ZZZZ");
+}
+
 function clarification(question: string, details?: Record<string, unknown>) {
   return {
     content: [{ type: "text" as const, text: question }],
@@ -397,7 +404,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       const lines = todos.length
         ? todos.map(
             (todo, index) =>
-              `${index + 1}. #${todo.id} [${todo.status}] ${todo.title}${todo.dueAt ? ` (due ${todo.dueAt})` : ""}`,
+              `${index + 1}. #${todo.id} [${todo.status}] ${todo.title}${todo.dueAt ? ` (due ${formatDisplayDateTime(todo.dueAt)})` : ""}`,
           )
         : ["No todos found."];
 
@@ -444,7 +451,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       const lines = todos.length
         ? todos.map(
             (todo, index) =>
-              `${index + 1}. #${todo.id} [${todo.status}] ${todo.title}${todo.dueAt ? ` (due ${todo.dueAt})` : ""} (updated ${todo.updatedAt})`,
+              `${index + 1}. #${todo.id} [${todo.status}] ${todo.title}${todo.dueAt ? ` (due ${formatDisplayDateTime(todo.dueAt)})` : ""} (updated ${formatDisplayDateTime(todo.updatedAt)})`,
           )
         : ["No matching todos found."];
 
@@ -697,7 +704,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         content: [
           {
             type: "text",
-            text: `Added reminder #${created.id} linked to todo #${todo.id} at ${created.remindAt}.`,
+            text: `Added reminder #${created.id} linked to todo #${todo.id} at ${formatDisplayDateTime(created.remindAt, created.timezone)}.`,
           },
         ],
         details: created,
@@ -729,7 +736,8 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
 
       const lines = reminders.length
         ? reminders.map(
-            (r) => `#${r.id} [${r.status}] ${r.text} @ ${r.remindAt}${r.todoId ? ` (todo #${r.todoId})` : ""}`,
+            (r) =>
+              `#${r.id} [${r.status}] ${r.text} @ ${formatDisplayDateTime(r.remindAt, r.timezone)}${r.todoId ? ` (todo #${r.todoId})` : ""}`,
           )
         : ["No due reminders."];
 
@@ -773,7 +781,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       const lines = reminders.length
         ? reminders.map(
             (r, index) =>
-              `${index + 1}. #${r.id} [${r.status}] ${r.text} @ ${r.remindAt}${r.todoId ? ` (todo #${r.todoId})` : ""}`,
+              `${index + 1}. #${r.id} [${r.status}] ${r.text} @ ${formatDisplayDateTime(r.remindAt, r.timezone)}${r.todoId ? ` (todo #${r.todoId})` : ""}`,
           )
         : ["No reminders found."];
 

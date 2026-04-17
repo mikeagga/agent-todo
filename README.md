@@ -35,6 +35,9 @@ Set env vars (in `.env` or shell):
 - `PI_EXTRA_ARGS` (optional; additional args for `pi --mode rpc`)
 - `REMINDER_NOTIFICATIONS_ENABLED` (`true` default; set `false` to disable server push reminders)
 - `REMINDER_POLL_SECONDS` (`30` default)
+- `REMINDER_DISPATCH_STALE_SECONDS` (`120` default; retry claim window for stuck dispatches)
+- `REMINDER_SEND_MAX_RETRIES` (`3` default)
+- `REMINDER_SEND_RETRY_BASE_MS` (`1000` default; exponential backoff base)
 - `TELEGRAM_REMINDER_CHAT_ID` (optional target chat for reminder pushes; falls back to `TELEGRAM_ALLOWED_CHAT_ID`)
 - `TODO_USER_ID` (optional; defaults to `local-user` for reminder polling)
 
@@ -54,7 +57,9 @@ Behavior:
 - Telegram bot forwards your exact message text to `pi --mode rpc`
 - It waits for the agent response and sends the assistant text back to Telegram
 - Reminder dispatcher runs server-side on an interval and pushes due reminders directly to Telegram
-- Reminder push uses DB queries only (`listDueReminders` + `markReminderSent`) and does not call the LLM
+- Reminder push uses DB queries only (`listDueReminders` + dispatch claim/receipt tracking + `markReminderSent`) and does not call the LLM
+- Reminder delivery includes retry/backoff and late-reminder labeling
+- User-facing date/time display is formatted in 12-hour time (e.g. `Apr 17, 2026 9:30 PM`)
 - No local intent parsing happens in the Telegram layer
 
 Default DB file:

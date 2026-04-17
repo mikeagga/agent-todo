@@ -28,6 +28,10 @@ interface ReminderRow {
   sent_at: string | null;
 }
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
 function mapReminder(row: ReminderRow): Reminder {
   return {
     id: row.id,
@@ -122,7 +126,7 @@ export class ReminderService {
   }
 
   markReminderSent(reminderId: number): Reminder {
-    const now = new Date().toISOString();
+    const now = nowIso();
 
     const result = this.db
       .prepare(
@@ -148,7 +152,7 @@ export class ReminderService {
     const parsed = CancelReminderInputSchema.parse(input);
     const userId = this.users.getUserIdOrThrow(parsed.userExternalId);
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const result = this.db
       .prepare(
         `
@@ -172,7 +176,7 @@ export class ReminderService {
   }
 
   cancelPendingForTodoId(todoId: number): number {
-    const now = new Date().toISOString();
+    const now = nowIso();
     const result = this.db
       .prepare(
         `
@@ -232,5 +236,76 @@ export class ReminderService {
 
   listAllForUser(userExternalId: string, limit = 100): Reminder[] {
     return this.listReminders({ userExternalId, limit });
+  }
+
+  claimReminderForDispatch(
+    reminderId: number,
+    options?: { claimToken?: string; staleAfterSeconds?: number },
+  ): boolean {
+    const now = nowIso();
+    const staleAfterSeconds = options?.staleAfterSeconds ?? 120;
+    const staleBefore = new Date(Date.parse(now) - staleAfterSeconds * 1000).toISOString();
+    const claimToken = options?.claimToken ?? `${reminderId}:${now}`;
+
+    const result = this.db
+      .prepare(
+        `
+          INSERT INTO reminder_dispatch_receipts (
+            reminder_id,
+            claim_token,
+            claimed_at,
+            sent_at,
+            attempts,
+            last_error,
+            updated_at
+          )
+          VALUES (?, ?, ?, NULL, 1, NULL, ?)
+          ON CONFLICT(reminder_id)
+          DO UPDATE SET
+            claim_token = excluded.claim_token,
+            claimed_at = excluded.claimed_at,
+            attempts = reminder_dispatch_receipts.attempts + 1,
+            last_error = NULL,
+            updated_at = excluded.updated_at
+          WHERE reminder_dispatch_receipts.sent_at IS NULL
+            AND reminder_dispatch_receipts.claimed_at <= ?
+        `,
+      )
+      .run(reminderId, claimToken, now, now, staleBefore);
+
+    return result.changes > 0;
+  }
+
+  markReminderDispatchSent(reminderId: number, claimToken?: string): void {
+    const now = nowIso();
+
+    this.db
+      .prepare(
+        `
+          UPDATE reminder_dispatch_receipts
+          SET sent_at = ?,
+              last_error = NULL,
+              updated_at = ?
+          WHERE reminder_id = ?
+            AND (? IS NULL OR claim_token = ?)
+        `,
+      )
+      .run(now, now, reminderId, claimToken ?? null, claimToken ?? null);
+  }
+
+  markReminderDispatchFailed(reminderId: number, errorMessage: string, claimToken?: string): void {
+    const now = nowIso();
+
+    this.db
+      .prepare(
+        `
+          UPDATE reminder_dispatch_receipts
+          SET last_error = ?,
+              updated_at = ?
+          WHERE reminder_id = ?
+            AND (? IS NULL OR claim_token = ?)
+        `,
+      )
+      .run(errorMessage.slice(0, 2000), now, reminderId, claimToken ?? null, claimToken ?? null);
   }
 }

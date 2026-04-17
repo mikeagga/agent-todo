@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer, type Server } from "node:http";
 import { StringDecoder } from "node:string_decoder";
@@ -29,6 +30,9 @@ const REMINDER_NOTIFICATIONS_ENABLED = (process.env.REMINDER_NOTIFICATIONS_ENABL
 const REMINDER_POLL_SECONDS = Number.parseInt(process.env.REMINDER_POLL_SECONDS ?? "30", 10) || 30;
 const REMINDER_USER_EXTERNAL_ID = process.env.TODO_USER_ID ?? "local-user";
 const TELEGRAM_REMINDER_CHAT_ID = process.env.TELEGRAM_REMINDER_CHAT_ID;
+const REMINDER_DISPATCH_STALE_SECONDS = Number.parseInt(process.env.REMINDER_DISPATCH_STALE_SECONDS ?? "120", 10) || 120;
+const REMINDER_SEND_MAX_RETRIES = Number.parseInt(process.env.REMINDER_SEND_MAX_RETRIES ?? "3", 10) || 3;
+const REMINDER_SEND_RETRY_BASE_MS = Number.parseInt(process.env.REMINDER_SEND_RETRY_BASE_MS ?? "1000", 10) || 1000;
 
 type RpcResponse = {
   id?: string;
@@ -201,9 +205,64 @@ function getReminderChatId(): number | null {
   return parseChatId(TELEGRAM_REMINDER_CHAT_ID) ?? parseChatId(ALLOWED_CHAT_ID);
 }
 
-function formatReminderMessage(reminder: Reminder): string {
-  const when = reminder.remindAt;
-  return `⏰ Reminder\n${reminder.text}\nWhen: ${when}${reminder.todoId ? `\nTodo: #${reminder.todoId}` : ""}`;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatDateTime12h(iso: string, timezone?: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: timezone && timezone.trim() ? timezone : "UTC",
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(date);
+  }
+}
+
+function formatReminderMessage(reminder: Reminder, nowIso: string): string {
+  const when = formatDateTime12h(reminder.remindAt, reminder.timezone);
+  const dueMs = Date.parse(reminder.remindAt);
+  const nowMs = Date.parse(nowIso);
+  const isLate = Number.isFinite(dueMs) && Number.isFinite(nowMs) && dueMs < nowMs;
+
+  return `⏰ Reminder${isLate ? " (late)" : ""}\n${reminder.text}\nWhen: ${when}${reminder.todoId ? `\nTodo: #${reminder.todoId}` : ""}`;
+}
+
+async function sendReminderWithRetry(chatId: number, reminder: Reminder, nowIso: string): Promise<void> {
+  let attempt = 0;
+  let lastError: unknown;
+
+  while (attempt < REMINDER_SEND_MAX_RETRIES) {
+    try {
+      await sendTelegramText(chatId, formatReminderMessage(reminder, nowIso));
+      return;
+    } catch (error) {
+      lastError = error;
+      attempt += 1;
+      if (attempt >= REMINDER_SEND_MAX_RETRIES) break;
+
+      const backoffMs = REMINDER_SEND_RETRY_BASE_MS * 2 ** (attempt - 1);
+      await sleep(backoffMs);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function pollAndPushDueReminders(): Promise<void> {
@@ -219,16 +278,47 @@ async function pollAndPushDueReminders(): Promise<void> {
   }
 
   reminderPollingInFlight = true;
+  const nowIso = new Date().toISOString();
+  let fetched = 0;
+  let claimed = 0;
+  let sent = 0;
+  let failed = 0;
+
   try {
     const due = backbone.reminderService.listDueReminders({
       userExternalId: REMINDER_USER_EXTERNAL_ID,
-      asOf: new Date().toISOString(),
+      asOf: nowIso,
       limit: 200,
     });
+    fetched = due.length;
 
     for (const reminder of due) {
-      await sendTelegramText(chatId, formatReminderMessage(reminder));
-      backbone.reminderService.markReminderSent(reminder.id);
+      const claimToken = randomUUID();
+      const wasClaimed = backbone.reminderService.claimReminderForDispatch(reminder.id, {
+        claimToken,
+        staleAfterSeconds: REMINDER_DISPATCH_STALE_SECONDS,
+      });
+      if (!wasClaimed) continue;
+
+      claimed += 1;
+
+      try {
+        await sendReminderWithRetry(chatId, reminder, nowIso);
+        backbone.reminderService.markReminderSent(reminder.id);
+        backbone.reminderService.markReminderDispatchSent(reminder.id, claimToken);
+        sent += 1;
+      } catch (error) {
+        failed += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        backbone.reminderService.markReminderDispatchFailed(reminder.id, message, claimToken);
+        console.error(`[reminder dispatcher] send failed reminderId=${reminder.id} error=${message}`);
+      }
+    }
+
+    if (fetched > 0 || failed > 0) {
+      console.log(
+        `[reminder dispatcher] poll due=${fetched} claimed=${claimed} sent=${sent} failed=${failed} user=${REMINDER_USER_EXTERNAL_ID}`,
+      );
     }
   } catch (error) {
     console.error(`[reminder dispatcher] ${error instanceof Error ? error.message : String(error)}`);
