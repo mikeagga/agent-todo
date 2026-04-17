@@ -33,6 +33,10 @@ Set env vars (in `.env` or shell):
 - `PI_PROVIDER` / `PI_MODEL` (optional; choose provider/model for rpc process)
 - `PI_BIN` (optional; default `pi`)
 - `PI_EXTRA_ARGS` (optional; additional args for `pi --mode rpc`)
+- `REMINDER_NOTIFICATIONS_ENABLED` (`true` default; set `false` to disable server push reminders)
+- `REMINDER_POLL_SECONDS` (`30` default)
+- `TELEGRAM_REMINDER_CHAT_ID` (optional target chat for reminder pushes; falls back to `TELEGRAM_ALLOWED_CHAT_ID`)
+- `TODO_USER_ID` (optional; defaults to `local-user` for reminder polling)
 
 For webhook mode also set:
 - `TELEGRAM_WEBHOOK_URL` (public HTTPS URL Telegram should call)
@@ -49,6 +53,8 @@ npm run telegram:bot
 Behavior:
 - Telegram bot forwards your exact message text to `pi --mode rpc`
 - It waits for the agent response and sends the assistant text back to Telegram
+- Reminder dispatcher runs server-side on an interval and pushes due reminders directly to Telegram
+- Reminder push uses DB queries only (`listDueReminders` + `markReminderSent`) and does not call the LLM
 - No local intent parsing happens in the Telegram layer
 
 Default DB file:

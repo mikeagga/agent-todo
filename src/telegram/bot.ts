@@ -4,6 +4,8 @@ import { EventEmitter } from "node:events";
 import { createServer, type Server } from "node:http";
 import { StringDecoder } from "node:string_decoder";
 import TelegramBot, { type Message } from "node-telegram-bot-api";
+import { createBackbone } from "../index.js";
+import type { Reminder } from "../models.js";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TELEGRAM_BOT_TOKEN) {
@@ -22,6 +24,11 @@ const TELEGRAM_WEBHOOK_PATH = process.env.TELEGRAM_WEBHOOK_PATH ?? "/telegram/we
 const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
 const TELEGRAM_WEBHOOK_HOST = process.env.TELEGRAM_WEBHOOK_HOST ?? "0.0.0.0";
 const TELEGRAM_WEBHOOK_PORT = Number.parseInt(process.env.TELEGRAM_WEBHOOK_PORT ?? "8788", 10) || 8788;
+
+const REMINDER_NOTIFICATIONS_ENABLED = (process.env.REMINDER_NOTIFICATIONS_ENABLED ?? "true").toLowerCase() !== "false";
+const REMINDER_POLL_SECONDS = Number.parseInt(process.env.REMINDER_POLL_SECONDS ?? "30", 10) || 30;
+const REMINDER_USER_EXTERNAL_ID = process.env.TODO_USER_ID ?? "local-user";
+const TELEGRAM_REMINDER_CHAT_ID = process.env.TELEGRAM_REMINDER_CHAT_ID;
 
 type RpcResponse = {
   id?: string;
@@ -176,9 +183,59 @@ class PiRpcClient {
 
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: TELEGRAM_MODE === "polling" });
 const rpc = new PiRpcClient();
+const backbone = createBackbone({ filePath: process.env.DB_PATH });
 let webhookServer: Server | null = null;
+let reminderInterval: NodeJS.Timeout | null = null;
+let reminderPollingInFlight = false;
+let reminderChatWarningShown = false;
 
 let queue: Promise<void> = Promise.resolve();
+
+function parseChatId(value?: string): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function getReminderChatId(): number | null {
+  return parseChatId(TELEGRAM_REMINDER_CHAT_ID) ?? parseChatId(ALLOWED_CHAT_ID);
+}
+
+function formatReminderMessage(reminder: Reminder): string {
+  const when = reminder.remindAt;
+  return `⏰ Reminder\n${reminder.text}\nWhen: ${when}${reminder.todoId ? `\nTodo: #${reminder.todoId}` : ""}`;
+}
+
+async function pollAndPushDueReminders(): Promise<void> {
+  if (!REMINDER_NOTIFICATIONS_ENABLED || reminderPollingInFlight) return;
+
+  const chatId = getReminderChatId();
+  if (chatId === null) {
+    if (!reminderChatWarningShown) {
+      console.warn("Reminder notifications are enabled, but no chat id is configured. Set TELEGRAM_REMINDER_CHAT_ID or TELEGRAM_ALLOWED_CHAT_ID.");
+      reminderChatWarningShown = true;
+    }
+    return;
+  }
+
+  reminderPollingInFlight = true;
+  try {
+    const due = backbone.reminderService.listDueReminders({
+      userExternalId: REMINDER_USER_EXTERNAL_ID,
+      asOf: new Date().toISOString(),
+      limit: 200,
+    });
+
+    for (const reminder of due) {
+      await sendTelegramText(chatId, formatReminderMessage(reminder));
+      backbone.reminderService.markReminderSent(reminder.id);
+    }
+  } catch (error) {
+    console.error(`[reminder dispatcher] ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    reminderPollingInFlight = false;
+  }
+}
 
 function denyUnauthorized(msg: Message): boolean {
   if (!ALLOWED_CHAT_ID) return false;
@@ -303,6 +360,11 @@ rpc.on("exit", (err) => {
 
 async function shutdown() {
   try {
+    if (reminderInterval) {
+      clearInterval(reminderInterval);
+      reminderInterval = null;
+    }
+
     if (TELEGRAM_MODE === "webhook") {
       try {
         await bot.deleteWebHook();
@@ -315,6 +377,7 @@ async function shutdown() {
     }
   } finally {
     rpc.close();
+    backbone.close();
   }
 }
 
@@ -336,5 +399,18 @@ process.on("SIGTERM", async () => {
     );
   } else {
     console.log("Telegram bot started (relay mode, polling).");
+  }
+
+  if (REMINDER_NOTIFICATIONS_ENABLED) {
+    await pollAndPushDueReminders();
+    reminderInterval = setInterval(() => {
+      void pollAndPushDueReminders();
+    }, REMINDER_POLL_SECONDS * 1000);
+
+    console.log(
+      `Reminder dispatcher active (poll every ${REMINDER_POLL_SECONDS}s, user=${REMINDER_USER_EXTERNAL_ID}, chatId=${getReminderChatId() ?? "not-configured"}).`,
+    );
+  } else {
+    console.log("Reminder dispatcher disabled (REMINDER_NOTIFICATIONS_ENABLED=false).");
   }
 })();
