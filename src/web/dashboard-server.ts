@@ -60,59 +60,31 @@ function dashboardHtml(): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>✨ Todo &amp; Reminder Dashboard ✨</title>
+  <title>Todo &amp; Reminder Dashboard</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700;900&display=swap');
-
-    :root {
-      --pink: #ff6eb4;
-      --purple: #a855f7;
-      --blue: #3b82f6;
-      --yellow: #fde047;
-      --orange: #fb923c;
-      --green: #4ade80;
-      --red: #f87171;
-    }
-
     * { box-sizing: border-box; }
 
     body {
-      font-family: 'Nunito', 'Trebuchet MS', Verdana, sans-serif;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
       margin: 0;
       min-height: 100vh;
-      background: linear-gradient(135deg, #1e0533 0%, #0d1b6e 40%, #0a3d62 100%);
-      background-attachment: fixed;
-      color: #fff;
-      overflow-x: hidden;
+      background-color: #1e2e42;
+      background-image: radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px);
+      background-size: 22px 22px;
+      color: #cdd8e8;
     }
 
-    /* Twinkling stars background */
-    body::before {
-      content: '⭐✨🌟💫⭐✨🌟💫⭐✨🌟💫⭐✨🌟💫⭐✨🌟💫⭐✨🌟💫⭐✨🌟💫⭐✨🌟💫';
-      position: fixed;
-      top: 0; left: 0; right: 0;
-      font-size: 18px;
-      opacity: 0.15;
-      letter-spacing: 10px;
-      line-height: 2.2;
-      word-break: break-all;
-      pointer-events: none;
-      z-index: 0;
-      animation: drift 20s linear infinite;
-    }
-    @keyframes drift { from { transform: translateY(0); } to { transform: translateY(-60px); } }
-
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px; position: relative; z-index: 1; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
 
     /* ===== HEADER ===== */
     .site-header {
       text-align: center;
-      margin-bottom: 28px;
-      padding: 24px 20px 20px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 100%);
-      border: 2px solid rgba(255,255,255,0.3);
-      border-radius: 20px;
-      box-shadow: 0 8px 32px rgba(168,85,247,0.4), inset 0 1px 0 rgba(255,255,255,0.4);
+      margin-bottom: 22px;
+      padding: 20px 20px 16px;
+      background: linear-gradient(180deg, #253d58 0%, #1a2f47 100%);
+      border: 1px solid #3a5470;
+      border-top: 3px solid #6a9ab8;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       position: relative;
       overflow: hidden;
     }
@@ -120,43 +92,50 @@ function dashboardHtml(): string {
       content: '';
       position: absolute;
       top: 0; left: 0; right: 0;
-      height: 50%;
-      background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, transparent 100%);
-      border-radius: 20px 20px 0 0;
+      height: 45%;
+      background: linear-gradient(180deg, rgba(255,255,255,0.07) 0%, transparent 100%);
       pointer-events: none;
     }
 
+    .ascii-border {
+      font-family: monospace;
+      font-size: 11px;
+      color: #3a5470;
+      letter-spacing: 0;
+      white-space: pre;
+      user-select: none;
+    }
+
     h1 {
-      font-family: 'Fredoka One', 'Comic Sans MS', cursive;
-      font-size: clamp(2rem, 5vw, 3.5rem);
-      margin: 0 0 6px;
-      background: linear-gradient(90deg, #ff6eb4, #fde047, #4ade80, #3b82f6, #a855f7, #ff6eb4);
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
+      font-size: clamp(1.6rem, 4vw, 2.8rem);
+      margin: 8px 0 6px;
+      background: linear-gradient(90deg, #b87090, #c8a84a, #6a9e78, #5a88b8, #8a70b8, #b87090);
       background-size: 300% 100%;
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      animation: rainbow 4s linear infinite;
-      text-shadow: none;
-      filter: drop-shadow(0 2px 6px rgba(255,110,180,0.6));
+      animation: rainbow 7s linear infinite;
+      filter: drop-shadow(0 1px 3px rgba(100,70,120,0.4));
     }
     @keyframes rainbow { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
 
     .tagline {
-      font-size: 14px;
-      color: rgba(255,255,255,0.7);
-      margin: 0;
+      font-size: 12px;
+      color: #5a7890;
+      margin: 4px 0 0;
+      font-family: monospace;
       letter-spacing: 1px;
     }
-    .tagline span { color: var(--yellow); font-weight: 900; }
 
     /* ===== PANEL ===== */
     .panel {
-      background: linear-gradient(160deg, rgba(255,255,255,0.13) 0%, rgba(255,255,255,0.05) 100%);
-      border: 1.5px solid rgba(255,255,255,0.25);
-      border-radius: 18px;
-      padding: 18px;
-      margin-bottom: 20px;
-      box-shadow: 0 6px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.25);
+      background: linear-gradient(180deg, #1e3050 0%, #182840 100%);
+      border: 1px solid #2d4060;
+      border-top: 2px solid #3a5678;
+      padding: 16px;
+      margin-bottom: 18px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
       position: relative;
       overflow: hidden;
     }
@@ -164,72 +143,86 @@ function dashboardHtml(): string {
       content: '';
       position: absolute;
       top: 0; left: 0; right: 0;
-      height: 40%;
-      background: linear-gradient(180deg, rgba(255,255,255,0.1) 0%, transparent 100%);
-      border-radius: 18px 18px 0 0;
+      height: 35%;
+      background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, transparent 100%);
       pointer-events: none;
     }
 
-    h2 {
-      font-family: 'Fredoka One', 'Comic Sans MS', cursive;
-      font-size: 1.5rem;
-      margin: 0 8px 0 0;
-      text-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px dashed #2d4060;
     }
-    .panel-todos h2   { color: var(--yellow); }
-    .panel-reminders h2 { color: var(--pink); }
-    .panel-controls h2  { color: var(--green); }
+    .panel-todos .panel-header   { border-bottom-color: #3a5830; }
+    .panel-reminders .panel-header { border-bottom-color: #3a3058; }
+
+    h2 {
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
+      font-size: 1.15rem;
+      margin: 0;
+    }
+    .panel-todos h2     { color: #a8c87a; }
+    .panel-reminders h2 { color: #a880c0; }
+    .panel-controls h2  { color: #7aaac8; }
+
+    .section-label {
+      font-family: monospace;
+      font-size: 12px;
+      color: #4a6888;
+    }
 
     /* ===== CONTROLS ===== */
-    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
 
     label {
-      font-size: 12px;
-      font-weight: 900;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: rgba(255,255,255,0.6);
+      font-size: 11px;
+      font-weight: bold;
+      color: #6a8aaa;
+      font-family: monospace;
     }
 
     input, select {
-      border-radius: 50px;
-      border: 2px solid rgba(255,255,255,0.2);
-      background: rgba(0,0,0,0.35);
-      color: #fff;
-      padding: 6px 14px;
-      font-family: inherit;
-      font-size: 13px;
+      border: 1px solid #2d4060;
+      border-bottom: 2px solid #3a5678;
+      background: #0f1e30;
+      color: #cdd8e8;
+      padding: 6px 10px;
+      font-family: 'Comic Sans MS', cursive;
+      font-size: 12px;
       outline: none;
-      transition: border-color 0.2s, box-shadow 0.2s;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
     input:focus, select:focus {
-      border-color: var(--pink);
-      box-shadow: 0 0 0 3px rgba(255,110,180,0.3);
+      border-color: #5a88b8;
+      box-shadow: 0 0 0 2px rgba(90,136,184,0.2);
     }
-    select option { background: #1e0533; }
+    select option { background: #0f1e30; }
     .token { width: 280px; }
 
     /* ===== BUTTONS ===== */
     button {
       cursor: pointer;
-      font-family: 'Nunito', inherit;
-      font-weight: 900;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
+      font-weight: bold;
       font-size: 12px;
-      letter-spacing: 0.5px;
-      padding: 7px 14px;
+      padding: 6px 14px;
       border-radius: 50px;
       border: none;
       position: relative;
       overflow: hidden;
-      transition: transform 0.12s, box-shadow 0.12s;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+      transition: transform 0.1s, box-shadow 0.1s;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.45);
+      white-space: nowrap;
     }
     button::after {
       content: '';
       position: absolute;
       top: 0; left: 0; right: 0;
       height: 50%;
-      background: rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.22);
       border-radius: 50px 50px 0 0;
       pointer-events: none;
     }
@@ -237,150 +230,151 @@ function dashboardHtml(): string {
     button:active { transform: translateY(1px) scale(0.97); }
 
     button.primary {
-      background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
-      box-shadow: 0 4px 12px rgba(37,99,235,0.5), inset 0 1px 0 rgba(255,255,255,0.35);
+      background: linear-gradient(180deg, #6a98c8 0%, #3a68a8 100%);
+      box-shadow: 0 3px 10px rgba(58,104,168,0.4), inset 0 1px 0 rgba(255,255,255,0.28);
       color: #fff;
     }
     button.warn {
-      background: linear-gradient(180deg, #f87171 0%, #dc2626 100%);
-      box-shadow: 0 4px 12px rgba(220,38,38,0.5), inset 0 1px 0 rgba(255,255,255,0.35);
+      background: linear-gradient(180deg, #c87878 0%, #a84848 100%);
+      box-shadow: 0 3px 10px rgba(168,72,72,0.4), inset 0 1px 0 rgba(255,255,255,0.28);
       color: #fff;
     }
     button.neutral {
-      background: linear-gradient(180deg, #94a3b8 0%, #475569 100%);
-      box-shadow: 0 4px 12px rgba(71,85,105,0.5), inset 0 1px 0 rgba(255,255,255,0.3);
+      background: linear-gradient(180deg, #7a8898 0%, #4a5868 100%);
+      box-shadow: 0 3px 8px rgba(74,88,104,0.35), inset 0 1px 0 rgba(255,255,255,0.22);
       color: #fff;
     }
     button#reload {
-      background: linear-gradient(180deg, #86efac 0%, #16a34a 100%);
-      box-shadow: 0 4px 14px rgba(22,163,74,0.5), inset 0 1px 0 rgba(255,255,255,0.4);
+      background: linear-gradient(180deg, #7ab888 0%, #4a8860 100%);
+      box-shadow: 0 3px 10px rgba(74,136,96,0.4), inset 0 1px 0 rgba(255,255,255,0.32);
       color: #fff;
       font-size: 13px;
-      padding: 8px 20px;
+      padding: 7px 18px;
     }
 
     /* ===== TABLE ===== */
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th {
       text-align: left;
-      padding: 10px 8px;
-      font-size: 11px;
-      font-weight: 900;
-      letter-spacing: 1px;
+      padding: 8px;
+      font-size: 10px;
+      font-weight: bold;
+      letter-spacing: 0.8px;
       text-transform: uppercase;
-      color: rgba(255,255,255,0.5);
-      border-bottom: 2px solid rgba(255,255,255,0.1);
+      color: #4a6888;
+      border-bottom: 1px solid #2d4060;
+      font-family: monospace;
     }
     td {
-      padding: 9px 8px;
+      padding: 8px;
       vertical-align: middle;
-      border-bottom: 1px solid rgba(255,255,255,0.07);
+      border-bottom: 1px solid #1a2a3c;
     }
-    tr:hover td { background: rgba(255,255,255,0.04); }
+    tr:hover td { background: rgba(255,255,255,0.025); }
     td input, td select {
-      border-radius: 8px;
-      padding: 5px 8px;
+      padding: 4px 7px;
       width: 100%;
       min-width: 80px;
+      font-size: 11px;
     }
 
     /* ID badge */
     .id-badge {
       display: inline-block;
-      background: linear-gradient(135deg, var(--purple), var(--pink));
-      color: #fff;
-      font-weight: 900;
+      background: linear-gradient(180deg, #6a5898 0%, #4a3878 100%);
+      color: #d8c8f0;
+      font-family: monospace;
       font-size: 11px;
+      font-weight: bold;
       padding: 2px 8px;
-      border-radius: 50px;
-      box-shadow: 0 2px 6px rgba(168,85,247,0.5);
+      border-radius: 3px;
+      box-shadow: 0 2px 4px rgba(74,56,120,0.4), inset 0 1px 0 rgba(255,255,255,0.18);
     }
 
-    /* Status pills */
-    .pill {
+    /* Status badges */
+    .badge {
       display: inline-block;
+      font-family: monospace;
       font-size: 10px;
-      font-weight: 900;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      padding: 3px 10px;
-      border-radius: 50px;
+      font-weight: bold;
+      letter-spacing: 0.3px;
+      padding: 2px 7px;
+      border-radius: 2px;
     }
-    .pill-open    { background: linear-gradient(90deg,#4ade80,#16a34a); color:#fff; box-shadow:0 2px 6px rgba(74,222,128,.4); }
-    .pill-done    { background: linear-gradient(90deg,#94a3b8,#475569); color:#fff; }
-    .pill-cancelled { background: linear-gradient(90deg,#f87171,#dc2626); color:#fff; box-shadow:0 2px 6px rgba(248,113,113,.4); }
-    .pill-pending { background: linear-gradient(90deg,#fbbf24,#d97706); color:#fff; box-shadow:0 2px 6px rgba(251,191,36,.4); }
-    .pill-sent    { background: linear-gradient(90deg,#60a5fa,#2563eb); color:#fff; box-shadow:0 2px 6px rgba(96,165,250,.4); }
+    .badge-open     { background: linear-gradient(180deg, #628a50 0%, #3a6030 100%); color:#d8f0d8; box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
+    .badge-done     { background: linear-gradient(180deg, #607078 0%, #384048 100%); color:#c8d8d8; box-shadow: inset 0 1px 0 rgba(255,255,255,.15); }
+    .badge-cancelled{ background: linear-gradient(180deg, #906050 0%, #684030 100%); color:#f0d8d0; box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
+    .badge-pending  { background: linear-gradient(180deg, #987840 0%, #705820 100%); color:#f0e8c8; box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
+    .badge-sent     { background: linear-gradient(180deg, #508898 0%, #306878 100%); color:#c8e8f0; box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
 
     /* ===== STATUS BAR ===== */
     .status-bar {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px 16px;
-      background: rgba(0,0,0,0.3);
-      border-radius: 50px;
-      border: 1px solid rgba(255,255,255,0.1);
-      font-size: 13px;
+      padding: 8px 12px;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid #2d4060;
+      font-size: 12px;
+      font-family: monospace;
     }
     .status-dot {
-      width: 10px; height: 10px;
+      width: 8px; height: 8px;
       border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 8px var(--green);
+      background: #6a9e78;
+      box-shadow: 0 0 5px #6a9e78;
       animation: pulse 2s ease-in-out infinite;
       flex-shrink: 0;
     }
-    .status-dot.error { background: var(--red); box-shadow: 0 0 8px var(--red); }
+    .status-dot.error { background: #a86060; box-shadow: 0 0 5px #a86060; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-    #status { color: rgba(255,255,255,0.85); }
-
-    /* ===== SECTION DECORATORS ===== */
-    .section-emoji { font-size: 1.4rem; margin-right: 6px; }
+    #status { color: #8aaac0; }
 
     /* ===== EMPTY STATE ===== */
     .empty-state {
       text-align: center;
-      padding: 32px;
-      color: rgba(255,255,255,0.35);
-      font-size: 13px;
+      padding: 28px;
+      color: #3a5470;
+      font-size: 12px;
+      font-family: monospace;
     }
-    .empty-state .empty-icon { font-size: 2.5rem; display:block; margin-bottom:8px; }
 
     /* scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.6); border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: #0f1e30; }
+    ::-webkit-scrollbar-thumb { background: #3a5478; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header class="site-header">
-      <h1>✨ Todo &amp; Reminder Dashboard ✨</h1>
-      <p class="tagline">your personal <span>super-powered</span> productivity command centre 🚀</p>
+      <div class="ascii-border">+----------------------------------------------------+</div>
+      <h1>** Todo &amp; Reminder Dashboard **</h1>
+      <p class="tagline">-~- your personal productivity HQ -~-</p>
+      <div class="ascii-border">+----------------------------------------------------+</div>
     </header>
 
     <div class="panel panel-controls">
-      <div class="row">
-        <h2><span class="section-emoji">⚙️</span>Controls</h2>
+      <div class="panel-header">
+        <h2>//-- Controls --//</h2>
       </div>
       <div class="row">
-        <label>👤 User</label>
+        <label>[user]</label>
         <input id="userExternalId" value="${DEFAULT_USER_EXTERNAL_ID}" />
-        <label>🔑 Bearer token</label>
+        <label>[token]</label>
         <input id="token" class="token" placeholder="Only needed if DASHBOARD_TOKEN is set" />
-        <button id="reload">🔄 Reload Everything</button>
+        <button id="reload">&gt;&gt; Reload All</button>
       </div>
       <div class="status-bar">
         <span class="status-dot" id="statusDot"></span>
-        <span id="status">Ready to rock! 🤘</span>
+        <span id="status">&gt; ready.</span>
       </div>
     </div>
 
     <div class="panel panel-todos">
-      <div class="row">
-        <h2><span class="section-emoji">✅</span>Todos</h2>
-        <label>🔍 Status</label>
+      <div class="panel-header">
+        <h2>//-- Todos --//</h2>
+        <span class="section-label">[filter:]</span>
         <select id="todoStatusFilter">
           <option value="all">all</option>
           <option value="open" selected>open</option>
@@ -390,16 +384,16 @@ function dashboardHtml(): string {
       </div>
       <table>
         <thead>
-          <tr><th>🎫 ID</th><th>💡 Status</th><th>📝 Title</th><th>📄 Notes</th><th>🔥 Priority</th><th>📅 Due</th><th>⚡ Actions</th></tr>
+          <tr><th>[id]</th><th>[status]</th><th>[title]</th><th>[notes]</th><th>[priority]</th><th>[due]</th><th>[actions]</th></tr>
         </thead>
         <tbody id="todoRows"></tbody>
       </table>
     </div>
 
     <div class="panel panel-reminders">
-      <div class="row">
-        <h2><span class="section-emoji">⏰</span>Reminders</h2>
-        <label>🔍 Status</label>
+      <div class="panel-header">
+        <h2>//-- Reminders --//</h2>
+        <span class="section-label">[filter:]</span>
         <select id="reminderStatusFilter">
           <option value="all">all</option>
           <option value="pending" selected>pending</option>
@@ -409,7 +403,7 @@ function dashboardHtml(): string {
       </div>
       <table>
         <thead>
-          <tr><th>🎫 ID</th><th>💡 Status</th><th>💬 Text</th><th>🕒 Time</th><th>🌐 Timezone</th><th>🔁 Recurrence</th><th>⚡ Actions</th></tr>
+          <tr><th>[id]</th><th>[status]</th><th>[text]</th><th>[time]</th><th>[timezone]</th><th>[recurrence]</th><th>[actions]</th></tr>
         </thead>
         <tbody id="reminderRows"></tbody>
       </table>
@@ -445,23 +439,23 @@ function dashboardHtml(): string {
     })();
 
     function setStatus(msg, isError = false) {
-      statusEl.textContent = msg;
-      statusEl.style.color = isError ? '#fca5a5' : 'rgba(255,255,255,0.85)';
+      statusEl.textContent = '> ' + msg;
+      statusEl.style.color = isError ? '#c08080' : '#8aaac0';
       if (statusDotEl) {
         statusDotEl.className = 'status-dot' + (isError ? ' error' : '');
       }
     }
 
-    function statusPill(status) {
+    function statusBadge(status) {
       const map = {
-        open: 'pill pill-open',
-        done: 'pill pill-done',
-        cancelled: 'pill pill-cancelled',
-        pending: 'pill pill-pending',
-        sent: 'pill pill-sent',
+        open:      'badge badge-open',
+        done:      'badge badge-done',
+        cancelled: 'badge badge-cancelled',
+        pending:   'badge badge-pending',
+        sent:      'badge badge-sent',
       };
-      const cls = map[status] || 'pill pill-done';
-      return '<span class="' + cls + '">' + status + '</span>';
+      const cls = map[status] || 'badge badge-done';
+      return '<span class="' + cls + '">[' + status.toUpperCase() + ']</span>';
     }
 
     function tokenHeader() {
@@ -520,17 +514,17 @@ function dashboardHtml(): string {
 
       return '<tr data-id="' + todo.id + '">' +
         '<td><span class="id-badge">#' + todo.id + '</span></td>' +
-        '<td>' + statusPill(todo.status) + '</td>' +
+        '<td>' + statusBadge(todo.status) + '</td>' +
         '<td><input data-field="title" value="' + esc(todo.title) + '" /></td>' +
         '<td><input data-field="notes" value="' + esc(todo.notes) + '" /></td>' +
         '<td><select data-field="priority">' + priorityOptions + '</select></td>' +
         '<td><input data-field="dueAt" type="datetime-local" value="' + dueLocal + '" /></td>' +
         '<td><div class="row">' +
-        '<button data-action="saveTodo" class="primary">💾 Save</button>' +
-        '<button data-action="clearDue" class="neutral">🗑️ Due</button>' +
-        '<button data-action="clearNotes" class="neutral">🗑️ Notes</button>' +
-        '<button data-action="completeTodo" class="primary">✅ Done</button>' +
-        '<button data-action="cancelTodo" class="warn">❌ Cancel</button>' +
+        '<button data-action="saveTodo" class="primary">&gt;&gt; Save</button>' +
+        '<button data-action="clearDue" class="neutral">-- Due</button>' +
+        '<button data-action="clearNotes" class="neutral">-- Notes</button>' +
+        '<button data-action="completeTodo" class="primary">++ Done</button>' +
+        '<button data-action="cancelTodo" class="warn">xx Cancel</button>' +
         '</div></td>' +
         '</tr>';
     }
@@ -539,15 +533,15 @@ function dashboardHtml(): string {
       const remindLocal = toLocalInputValue(reminder.remindAt);
       return '<tr data-id="' + reminder.id + '">' +
         '<td><span class="id-badge">#' + reminder.id + '</span></td>' +
-        '<td>' + statusPill(reminder.status) + '</td>' +
+        '<td>' + statusBadge(reminder.status) + '</td>' +
         '<td><input data-field="text" value="' + esc(reminder.text) + '" /></td>' +
         '<td><input data-field="remindAt" type="datetime-local" value="' + remindLocal + '" /></td>' +
         '<td><input data-field="timezone" value="' + esc(reminder.timezone) + '" /></td>' +
         '<td><input data-field="recurrenceRule" value="' + esc(reminder.recurrenceRule) + '" /></td>' +
         '<td><div class="row">' +
-        '<button data-action="saveReminder" class="primary">💾 Save</button>' +
-        '<button data-action="clearRecurrence" class="neutral">🔁 Clear</button>' +
-        '<button data-action="cancelReminder" class="warn">❌ Cancel</button>' +
+        '<button data-action="saveReminder" class="primary">&gt;&gt; Save</button>' +
+        '<button data-action="clearRecurrence" class="neutral">-- Clear</button>' +
+        '<button data-action="cancelReminder" class="warn">xx Cancel</button>' +
         '</div></td>' +
         '</tr>';
     }
@@ -557,7 +551,7 @@ function dashboardHtml(): string {
       const qs = new URLSearchParams({ userExternalId: userId(), limit: '200' });
       if (status !== 'all') qs.set('status', status);
       const data = await api('/api/todos?' + qs.toString(), { method: 'GET', headers: {} });
-      todoRowsEl.innerHTML = data.todos.map(todoRow).join('') || '<tr><td colspan="7"><div class="empty-state"><span class="empty-icon">🌵</span>No todos found — go touch grass!</div></td></tr>';
+      todoRowsEl.innerHTML = data.todos.map(todoRow).join('') || '<tr><td colspan="7"><div class="empty-state">-- no todos found --</div></td></tr>';
     }
 
     async function loadReminders() {
@@ -565,14 +559,14 @@ function dashboardHtml(): string {
       const qs = new URLSearchParams({ userExternalId: userId(), limit: '200' });
       if (status !== 'all') qs.set('status', status);
       const data = await api('/api/reminders?' + qs.toString(), { method: 'GET', headers: {} });
-      reminderRowsEl.innerHTML = data.reminders.map(reminderRow).join('') || '<tr><td colspan="7"><div class="empty-state"><span class="empty-icon">⏰</span>No reminders — you\'re living in the moment!</div></td></tr>';
+      reminderRowsEl.innerHTML = data.reminders.map(reminderRow).join('') || '<tr><td colspan="7"><div class="empty-state">-- no reminders found --</div></td></tr>';
     }
 
     async function reloadAll() {
       setStatus('Loading...');
       try {
         await Promise.all([loadTodos(), loadReminders()]);
-        setStatus('All loaded! Looking fresh 🤩');
+        setStatus('all loaded. looking good!');
       } catch (err) {
         setStatus(err.message || String(err), true);
       }
@@ -595,19 +589,19 @@ function dashboardHtml(): string {
       try {
         if (btn.dataset.action === 'saveTodo') {
           await api('/api/todos/' + id, { method: 'PATCH', body: JSON.stringify({ userExternalId: userId(), title, notes, priority, dueAt }) });
-          setStatus('💾 Todo #' + id + ' saved! Awesome sauce 🌟');
+          setStatus('todo #' + id + ' saved.');
         } else if (btn.dataset.action === 'clearDue') {
           await api('/api/todos/' + id, { method: 'PATCH', body: JSON.stringify({ userExternalId: userId(), clearDueAt: true }) });
-          setStatus('🗑️ Due date cleared for #' + id + ' — living dangerously!');
+          setStatus('todo #' + id + ' due date cleared.');
         } else if (btn.dataset.action === 'clearNotes') {
           await api('/api/todos/' + id, { method: 'PATCH', body: JSON.stringify({ userExternalId: userId(), clearNotes: true }) });
-          setStatus('🗑️ Notes wiped for #' + id + ' — fresh slate!');
+          setStatus('todo #' + id + ' notes cleared.');
         } else if (btn.dataset.action === 'completeTodo') {
           await api('/api/todos/' + id + '/complete', { method: 'POST', body: JSON.stringify({ userExternalId: userId() }) });
-          setStatus('✅ Todo #' + id + ' crushed it! 💪');
+          setStatus('todo #' + id + ' marked done! nice work.');
         } else if (btn.dataset.action === 'cancelTodo') {
           await api('/api/todos/' + id + '/cancel', { method: 'POST', body: JSON.stringify({ userExternalId: userId() }) });
-          setStatus('❌ Todo #' + id + ' cancelled. Maybe next time! 🤷');
+          setStatus('todo #' + id + ' cancelled.');
         }
         await reloadAll();
       } catch (err) {
@@ -637,13 +631,13 @@ function dashboardHtml(): string {
               recurrenceRule: recurrenceRule || undefined,
             }),
           });
-          setStatus('💾 Reminder #' + id + ' updated! 🔔 ding ding!');
+          setStatus('reminder #' + id + ' updated.');
         } else if (btn.dataset.action === 'clearRecurrence') {
           await api('/api/reminders/' + id, { method: 'PATCH', body: JSON.stringify({ userExternalId: userId(), clearRecurrenceRule: true }) });
-          setStatus('🔁 Recurrence cleared for #' + id + ' — one and done!');
+          setStatus('reminder #' + id + ' recurrence cleared.');
         } else if (btn.dataset.action === 'cancelReminder') {
           await api('/api/reminders/' + id + '/cancel', { method: 'POST', body: JSON.stringify({ userExternalId: userId() }) });
-          setStatus('❌ Reminder #' + id + ' cancelled. Silence is golden! 🥇');
+          setStatus('reminder #' + id + ' cancelled.');
         }
         await reloadAll();
       } catch (err) {
