@@ -98,7 +98,7 @@ function dashboardHtml(): string {
     }
 
     .ascii-border {
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
       font-size: 11px;
       color: #3a5470;
       letter-spacing: 0;
@@ -124,7 +124,7 @@ function dashboardHtml(): string {
       font-size: 12px;
       color: #5a7890;
       margin: 4px 0 0;
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
       letter-spacing: 1px;
     }
 
@@ -137,7 +137,6 @@ function dashboardHtml(): string {
       margin-bottom: 18px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.25);
       position: relative;
-      overflow: hidden;
     }
     .panel::before {
       content: '';
@@ -169,7 +168,7 @@ function dashboardHtml(): string {
     .panel-controls h2  { color: #7aaac8; }
 
     .section-label {
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
       font-size: 12px;
       color: #4a6888;
     }
@@ -181,7 +180,7 @@ function dashboardHtml(): string {
       font-size: 11px;
       font-weight: bold;
       color: #6a8aaa;
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
     }
 
     input, select {
@@ -200,7 +199,10 @@ function dashboardHtml(): string {
       box-shadow: 0 0 0 2px rgba(90,136,184,0.2);
     }
     select option { background: #0f1e30; }
-    .token { width: 280px; }
+    .token { width: 280px; max-width: 100%; }
+
+    /* ===== TABLE SCROLL WRAPPER ===== */
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
     /* ===== BUTTONS ===== */
     button {
@@ -263,7 +265,7 @@ function dashboardHtml(): string {
       text-transform: uppercase;
       color: #4a6888;
       border-bottom: 1px solid #2d4060;
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
     }
     td {
       padding: 8px;
@@ -283,7 +285,7 @@ function dashboardHtml(): string {
       display: inline-block;
       background: linear-gradient(180deg, #6a5898 0%, #4a3878 100%);
       color: #d8c8f0;
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
       font-size: 11px;
       font-weight: bold;
       padding: 2px 8px;
@@ -294,7 +296,7 @@ function dashboardHtml(): string {
     /* Status badges */
     .badge {
       display: inline-block;
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
       font-size: 10px;
       font-weight: bold;
       letter-spacing: 0.3px;
@@ -316,7 +318,7 @@ function dashboardHtml(): string {
       background: rgba(0,0,0,0.25);
       border: 1px solid #2d4060;
       font-size: 12px;
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
     }
     .status-dot {
       width: 8px; height: 8px;
@@ -336,13 +338,73 @@ function dashboardHtml(): string {
       padding: 28px;
       color: #3a5470;
       font-size: 12px;
-      font-family: monospace;
+      font-family: 'Comic Sans MS', 'Comic Sans', cursive;
     }
 
     /* scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #0f1e30; }
     ::-webkit-scrollbar-thumb { background: #3a5478; }
+
+    /* ===== MOBILE ===== */
+    @media (max-width: 640px) {
+      .wrap { padding: 12px 10px; }
+
+      .ascii-border { display: none; }
+
+      /* Controls: stack inputs vertically */
+      .panel-controls .row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+      }
+      .panel-controls .row input,
+      .panel-controls .row select {
+        width: 100%;
+      }
+      .panel-controls .row button { align-self: flex-start; }
+
+      /* Card layout — hide regular table header */
+      table, thead, tbody, tr, th, td { display: block; }
+      thead tr { display: none; }
+
+      tbody tr {
+        border: 1px solid #2d4060;
+        border-top: 2px solid #3a5678;
+        margin-bottom: 12px;
+        padding: 8px 10px;
+        background: linear-gradient(180deg, #1e3050 0%, #182840 100%);
+      }
+
+      td {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        padding: 5px 0;
+        border-bottom: 1px solid #182840;
+      }
+      td:last-child { border-bottom: none; }
+
+      td::before {
+        content: attr(data-label);
+        font-family: 'Comic Sans MS', 'Comic Sans', cursive;
+        font-size: 10px;
+        font-weight: bold;
+        color: #4a6888;
+        min-width: 72px;
+        flex-shrink: 0;
+        padding-top: 5px;
+      }
+
+      td input, td select { flex: 1; min-width: 0; }
+
+      /* Button group in action cell: wrap nicely */
+      td .row {
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 0;
+      }
+    }
   </style>
 </head>
 <body>
@@ -382,12 +444,14 @@ function dashboardHtml(): string {
           <option value="cancelled">cancelled</option>
         </select>
       </div>
-      <table>
-        <thead>
-          <tr><th>[id]</th><th>[status]</th><th>[title]</th><th>[notes]</th><th>[priority]</th><th>[due]</th><th>[actions]</th></tr>
-        </thead>
-        <tbody id="todoRows"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>[id]</th><th>[status]</th><th>[title]</th><th>[notes]</th><th>[priority]</th><th>[due]</th><th>[actions]</th></tr>
+          </thead>
+          <tbody id="todoRows"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="panel panel-reminders">
@@ -401,12 +465,14 @@ function dashboardHtml(): string {
           <option value="cancelled">cancelled</option>
         </select>
       </div>
-      <table>
-        <thead>
-          <tr><th>[id]</th><th>[status]</th><th>[text]</th><th>[time]</th><th>[timezone]</th><th>[recurrence]</th><th>[actions]</th></tr>
-        </thead>
-        <tbody id="reminderRows"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>[id]</th><th>[status]</th><th>[text]</th><th>[time]</th><th>[timezone]</th><th>[recurrence]</th><th>[actions]</th></tr>
+          </thead>
+          <tbody id="reminderRows"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -513,13 +579,13 @@ function dashboardHtml(): string {
         .join('');
 
       return '<tr data-id="' + todo.id + '">' +
-        '<td><span class="id-badge">#' + todo.id + '</span></td>' +
-        '<td>' + statusBadge(todo.status) + '</td>' +
-        '<td><input data-field="title" value="' + esc(todo.title) + '" /></td>' +
-        '<td><input data-field="notes" value="' + esc(todo.notes) + '" /></td>' +
-        '<td><select data-field="priority">' + priorityOptions + '</select></td>' +
-        '<td><input data-field="dueAt" type="datetime-local" value="' + dueLocal + '" /></td>' +
-        '<td><div class="row">' +
+        '<td data-label="[id]"><span class="id-badge">#' + todo.id + '</span></td>' +
+        '<td data-label="[status]">' + statusBadge(todo.status) + '</td>' +
+        '<td data-label="[title]"><input data-field="title" value="' + esc(todo.title) + '" /></td>' +
+        '<td data-label="[notes]"><input data-field="notes" value="' + esc(todo.notes) + '" /></td>' +
+        '<td data-label="[priority]"><select data-field="priority">' + priorityOptions + '</select></td>' +
+        '<td data-label="[due]"><input data-field="dueAt" type="datetime-local" value="' + dueLocal + '" /></td>' +
+        '<td data-label="[actions]"><div class="row">' +
         '<button data-action="saveTodo" class="primary">&gt;&gt; Save</button>' +
         '<button data-action="clearDue" class="neutral">-- Due</button>' +
         '<button data-action="clearNotes" class="neutral">-- Notes</button>' +
@@ -532,13 +598,13 @@ function dashboardHtml(): string {
     function reminderRow(reminder) {
       const remindLocal = toLocalInputValue(reminder.remindAt);
       return '<tr data-id="' + reminder.id + '">' +
-        '<td><span class="id-badge">#' + reminder.id + '</span></td>' +
-        '<td>' + statusBadge(reminder.status) + '</td>' +
-        '<td><input data-field="text" value="' + esc(reminder.text) + '" /></td>' +
-        '<td><input data-field="remindAt" type="datetime-local" value="' + remindLocal + '" /></td>' +
-        '<td><input data-field="timezone" value="' + esc(reminder.timezone) + '" /></td>' +
-        '<td><input data-field="recurrenceRule" value="' + esc(reminder.recurrenceRule) + '" /></td>' +
-        '<td><div class="row">' +
+        '<td data-label="[id]"><span class="id-badge">#' + reminder.id + '</span></td>' +
+        '<td data-label="[status]">' + statusBadge(reminder.status) + '</td>' +
+        '<td data-label="[text]"><input data-field="text" value="' + esc(reminder.text) + '" /></td>' +
+        '<td data-label="[time]"><input data-field="remindAt" type="datetime-local" value="' + remindLocal + '" /></td>' +
+        '<td data-label="[timezone]"><input data-field="timezone" value="' + esc(reminder.timezone) + '" /></td>' +
+        '<td data-label="[recurrence]"><input data-field="recurrenceRule" value="' + esc(reminder.recurrenceRule) + '" /></td>' +
+        '<td data-label="[actions]"><div class="row">' +
         '<button data-action="saveReminder" class="primary">&gt;&gt; Save</button>' +
         '<button data-action="clearRecurrence" class="neutral">-- Clear</button>' +
         '<button data-action="cancelReminder" class="warn">xx Cancel</button>' +
