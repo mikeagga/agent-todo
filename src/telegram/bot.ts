@@ -492,32 +492,15 @@ function denyUnauthorized(msg: Message): boolean {
   return msg.chat.id !== allowed;
 }
 
-function toPlainTelegramText(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```/g, ""))
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\[(.*?)\]\((.*?)\)/g, "$1 ($2)");
-}
-
 function applyPromptPrefix(userPrompt: string): string {
   if (!PI_PROMPT_PREFIX) return userPrompt;
   return `${PI_PROMPT_PREFIX}\n\nUser request:\n${userPrompt}`;
 }
 
 async function sendTelegramText(chatId: number, text: string): Promise<void> {
-  try {
-    await bot.sendMessage(chatId, text, {
-      parse_mode: "Markdown",
-      disable_web_page_preview: true,
-    });
-  } catch {
-    await bot.sendMessage(chatId, toPlainTelegramText(text), {
-      disable_web_page_preview: true,
-    });
-  }
+  await bot.sendMessage(chatId, text, {
+    disable_web_page_preview: true,
+  });
 }
 
 function enqueueAgentPrompt(chatId: number, prompt: string, originLabel?: string): void {
