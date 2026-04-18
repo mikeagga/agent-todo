@@ -107,6 +107,7 @@ Webhook mode only:
 - `PI_BIN` (default `pi`)
 - `PI_PROVIDER` / `PI_MODEL` (optional)
 - `PI_EXTRA_ARGS` (optional)
+- `PI_PROMPT_PREFIX` (optional; lightweight tone/style instruction prepended to every relayed prompt)
 
 ### Reminder dispatcher tuning
 
@@ -248,9 +249,10 @@ There are two practical “long-term memory” layers right now:
 
 1. **Behavior/instructions memory** (recommended)
    - Put persistent response preferences in:
-     - project: `.pi/AGENTS.md`
+     - project: `AGENTS.md` (repo root)
      - global: `~/.pi/agent/AGENTS.md`
    - Example: response style, verbosity, decision rules, coding conventions.
+   - If you need strict Telegram tone control, set `PI_PROMPT_PREFIX` in env (applies to every relayed prompt).
 
 2. **Scheduled behavior memory**
    - Put recurring assistant routines in:

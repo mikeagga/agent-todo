@@ -22,6 +22,7 @@ const PI_BIN = process.env.PI_BIN ?? "pi";
 const PI_PROVIDER = process.env.PI_PROVIDER;
 const PI_MODEL = process.env.PI_MODEL;
 const PI_EXTRA_ARGS = (process.env.PI_EXTRA_ARGS ?? "").trim();
+const PI_PROMPT_PREFIX = (process.env.PI_PROMPT_PREFIX ?? "").trim();
 
 const TELEGRAM_MODE = (process.env.TELEGRAM_MODE ?? "polling").toLowerCase();
 const TELEGRAM_WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL;
@@ -491,6 +492,21 @@ function denyUnauthorized(msg: Message): boolean {
   return msg.chat.id !== allowed;
 }
 
+function toPlainTelegramText(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```/g, ""))
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1 ($2)");
+}
+
+function applyPromptPrefix(userPrompt: string): string {
+  if (!PI_PROMPT_PREFIX) return userPrompt;
+  return `${PI_PROMPT_PREFIX}\n\nUser request:\n${userPrompt}`;
+}
+
 async function sendTelegramText(chatId: number, text: string): Promise<void> {
   try {
     await bot.sendMessage(chatId, text, {
@@ -498,7 +514,7 @@ async function sendTelegramText(chatId: number, text: string): Promise<void> {
       disable_web_page_preview: true,
     });
   } catch {
-    await bot.sendMessage(chatId, text, {
+    await bot.sendMessage(chatId, toPlainTelegramText(text), {
       disable_web_page_preview: true,
     });
   }
@@ -507,7 +523,7 @@ async function sendTelegramText(chatId: number, text: string): Promise<void> {
 function enqueueAgentPrompt(chatId: number, prompt: string, originLabel?: string): void {
   queue = queue
     .then(async () => {
-      const reply = await rpc.runPrompt(prompt);
+      const reply = await rpc.runPrompt(applyPromptPrefix(prompt));
       const header = originLabel ? `🗓️ ${originLabel}\n\n` : "";
       await sendTelegramText(chatId, `${header}${reply}`);
     })
@@ -560,7 +576,7 @@ async function handleMessage(msg: Message): Promise<void> {
     return;
   }
 
-  const reply = await rpc.runPrompt(text);
+  const reply = await rpc.runPrompt(applyPromptPrefix(text));
   await sendTelegramText(chatId, reply);
 }
 
