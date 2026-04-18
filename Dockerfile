@@ -16,5 +16,7 @@ COPY . .
 # Optional but useful in containerized prod
 ENV NODE_ENV=production
 
-# Start: run migrations/init, then run telegram relay bot
-CMD ["sh", "-lc", "npm run db:init && npm run telegram:bot"]
+# Start: run migrations/init, then run both processes:
+# - telegram relay bot (background)
+# - dashboard web server (foreground, binds PORT on Railway)
+CMD ["sh", "-lc", "npm run db:init && npm run telegram:bot & npm run dashboard"]

@@ -1,11 +1,15 @@
+import { DateTime } from "luxon";
 import type { DB } from "../db/client.js";
+import { withDefaultTimezone } from "../config.js";
 import type { Reminder } from "../models.js";
 import {
   AddReminderInputSchema,
+  UpdateReminderInputSchema,
   ListDueRemindersInputSchema,
   ListRemindersInputSchema,
   CancelReminderInputSchema,
   type AddReminderInput,
+  type UpdateReminderInput,
   type ListDueRemindersInput,
   type ListRemindersInput,
   type CancelReminderInput,
@@ -30,6 +34,115 @@ interface ReminderRow {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+type RecurrenceFrequency = "MINUTELY" | "HOURLY" | "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
+
+type ParsedRecurrenceRule = {
+  frequency: RecurrenceFrequency;
+  interval: number;
+  count?: number;
+  untilUtcIso?: string;
+};
+
+function parseUntilToUtcIso(raw: string): string | null {
+  const value = raw.trim();
+
+  const iso = DateTime.fromISO(value, { zone: "utc" });
+  if (iso.isValid) return iso.toUTC().toISO() ?? null;
+
+  const compactUtc = DateTime.fromFormat(value, "yyyyMMdd'T'HHmmss'Z'", { zone: "utc" });
+  if (compactUtc.isValid) return compactUtc.toUTC().toISO() ?? null;
+
+  const compactDate = DateTime.fromFormat(value, "yyyyMMdd", { zone: "utc" });
+  if (compactDate.isValid) return compactDate.endOf("day").toUTC().toISO() ?? null;
+
+  return null;
+}
+
+function parseRecurrenceRule(rule: string): ParsedRecurrenceRule | null {
+  const parts = rule
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const kv = new Map<string, string>();
+  for (const part of parts) {
+    const [rawKey, ...rest] = part.split("=");
+    const key = rawKey?.trim().toUpperCase();
+    const value = rest.join("=").trim();
+    if (!key || !value) continue;
+    kv.set(key, value);
+  }
+
+  const frequency = kv.get("FREQ")?.toUpperCase() as RecurrenceFrequency | undefined;
+  if (!frequency || !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"].includes(frequency)) {
+    return null;
+  }
+
+  const intervalRaw = kv.get("INTERVAL");
+  const interval = intervalRaw ? Number.parseInt(intervalRaw, 10) : 1;
+  if (!Number.isFinite(interval) || interval <= 0) return null;
+
+  const countRaw = kv.get("COUNT");
+  const count = countRaw ? Number.parseInt(countRaw, 10) : undefined;
+  if (count !== undefined && (!Number.isFinite(count) || count <= 0)) return null;
+
+  const untilRaw = kv.get("UNTIL");
+  const untilParsed = untilRaw ? parseUntilToUtcIso(untilRaw) : null;
+  if (untilRaw && !untilParsed) return null;
+  const untilUtcIso = untilParsed ?? undefined;
+
+  return { frequency, interval, count, untilUtcIso };
+}
+
+function computeNextReminderAt(remindAtIso: string, recurrenceRule: ParsedRecurrenceRule, timezone?: string): string | null {
+  const zone = withDefaultTimezone(timezone);
+  const base = DateTime.fromISO(remindAtIso, { zone: "utc" }).setZone(zone);
+  if (!base.isValid) return null;
+
+  let next = base;
+  switch (recurrenceRule.frequency) {
+    case "MINUTELY":
+      next = base.plus({ minutes: recurrenceRule.interval });
+      break;
+    case "HOURLY":
+      next = base.plus({ hours: recurrenceRule.interval });
+      break;
+    case "DAILY":
+      next = base.plus({ days: recurrenceRule.interval });
+      break;
+    case "WEEKLY":
+      next = base.plus({ weeks: recurrenceRule.interval });
+      break;
+    case "MONTHLY":
+      next = base.plus({ months: recurrenceRule.interval });
+      break;
+    case "YEARLY":
+      next = base.plus({ years: recurrenceRule.interval });
+      break;
+  }
+
+  if (!next.isValid) return null;
+  const nextUtc = next.toUTC().toISO();
+  if (!nextUtc) return null;
+  if (Date.parse(nextUtc) <= Date.parse(remindAtIso)) return null;
+
+  if (recurrenceRule.untilUtcIso && Date.parse(nextUtc) > Date.parse(recurrenceRule.untilUtcIso)) {
+    return null;
+  }
+
+  return nextUtc;
+}
+
+function parseReminderMetadata(metadataJson: string | null): Record<string, unknown> {
+  if (!metadataJson) return {};
+  try {
+    const parsed = JSON.parse(metadataJson) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function mapReminder(row: ReminderRow): Reminder {
@@ -101,6 +214,61 @@ export class ReminderService {
     return mapReminder(row);
   }
 
+  updateReminder(input: UpdateReminderInput): Reminder {
+    const parsed = UpdateReminderInputSchema.parse(input);
+    const userId = this.users.getUserIdOrThrow(parsed.userExternalId);
+
+    const now = nowIso();
+    const sets: string[] = ["updated_at = @updated_at"];
+    const params: Record<string, unknown> = {
+      updated_at: now,
+      reminder_id: parsed.reminderId,
+      user_id: userId,
+    };
+
+    if (parsed.text !== undefined) {
+      sets.push("text = @text");
+      params.text = parsed.text;
+    }
+
+    if (parsed.remindAt !== undefined) {
+      sets.push("remind_at = @remind_at");
+      params.remind_at = parsed.remindAt;
+    }
+
+    if (parsed.timezone !== undefined) {
+      sets.push("timezone = @timezone");
+      params.timezone = parsed.timezone;
+    }
+
+    if (parsed.clearRecurrenceRule) {
+      sets.push("recurrence_rule = NULL");
+    } else if (parsed.recurrenceRule !== undefined) {
+      sets.push("recurrence_rule = @recurrence_rule");
+      params.recurrence_rule = parsed.recurrenceRule;
+    }
+
+    const updated = this.db
+      .prepare(
+        `
+          UPDATE reminders
+          SET ${sets.join(", ")}
+          WHERE id = @reminder_id AND user_id = @user_id
+        `,
+      )
+      .run(params);
+
+    if (updated.changes === 0) {
+      throw new Error(`Reminder ${parsed.reminderId} not found for user ${parsed.userExternalId}`);
+    }
+
+    const row = this.db
+      .prepare("SELECT * FROM reminders WHERE id = ?")
+      .get(parsed.reminderId) as ReminderRow;
+
+    return mapReminder(row);
+  }
+
   listDueReminders(input: ListDueRemindersInput): Reminder[] {
     const parsed = ListDueRemindersInputSchema.parse(input);
 
@@ -128,20 +296,53 @@ export class ReminderService {
   markReminderSent(reminderId: number): Reminder {
     const now = nowIso();
 
-    const result = this.db
-      .prepare(
-        `
-          UPDATE reminders
-          SET status = 'sent',
-              sent_at = ?,
-              updated_at = ?
-          WHERE id = ?
-        `,
-      )
-      .run(now, now, reminderId);
-
-    if (result.changes === 0) {
+    const existing = this.db.prepare("SELECT * FROM reminders WHERE id = ?").get(reminderId) as ReminderRow | undefined;
+    if (!existing) {
       throw new Error(`Reminder ${reminderId} not found`);
+    }
+
+    const recurrence = existing.recurrence_rule ? parseRecurrenceRule(existing.recurrence_rule) : null;
+    const metadata = parseReminderMetadata(existing.metadata_json);
+    const sentCountRaw = Number(metadata.recurrenceSentCount ?? 0);
+    const sentCount = Number.isFinite(sentCountRaw) && sentCountRaw >= 0 ? Math.floor(sentCountRaw) : 0;
+    const nextSentCount = sentCount + 1;
+
+    metadata.recurrenceSentCount = nextSentCount;
+    metadata.lastSentAt = now;
+    const nextMetadataJson = JSON.stringify(metadata);
+
+    const reachesCountLimit = recurrence?.count !== undefined && nextSentCount >= recurrence.count;
+    const nextRemindAt = recurrence && !reachesCountLimit
+      ? computeNextReminderAt(existing.remind_at, recurrence, existing.timezone)
+      : null;
+
+    if (nextRemindAt) {
+      this.db
+        .prepare(
+          `
+            UPDATE reminders
+            SET status = 'pending',
+                remind_at = ?,
+                sent_at = ?,
+                metadata_json = ?,
+                updated_at = ?
+            WHERE id = ?
+          `,
+        )
+        .run(nextRemindAt, now, nextMetadataJson, now, reminderId);
+    } else {
+      this.db
+        .prepare(
+          `
+            UPDATE reminders
+            SET status = 'sent',
+                sent_at = ?,
+                metadata_json = ?,
+                updated_at = ?
+            WHERE id = ?
+          `,
+        )
+        .run(now, nextMetadataJson, now, reminderId);
     }
 
     const row = this.db.prepare("SELECT * FROM reminders WHERE id = ?").get(reminderId) as ReminderRow;
@@ -278,6 +479,23 @@ export class ReminderService {
 
   markReminderDispatchSent(reminderId: number, claimToken?: string): void {
     const now = nowIso();
+
+    const reminder = this.db
+      .prepare("SELECT status FROM reminders WHERE id = ?")
+      .get(reminderId) as { status: Reminder["status"] } | undefined;
+
+    if (reminder?.status === "pending") {
+      this.db
+        .prepare(
+          `
+            DELETE FROM reminder_dispatch_receipts
+            WHERE reminder_id = ?
+              AND (? IS NULL OR claim_token = ?)
+          `,
+        )
+        .run(reminderId, claimToken ?? null, claimToken ?? null);
+      return;
+    }
 
     this.db
       .prepare(

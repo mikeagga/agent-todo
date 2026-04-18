@@ -1,3 +1,4 @@
+import { DEFAULT_TIMEZONE } from "./config.js";
 import { createBackbone } from "./index.js";
 
 const backbone = createBackbone();
@@ -14,7 +15,7 @@ try {
     userExternalId: "local-user",
     text: "Leave in 30 min",
     remindAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    timezone: "UTC",
+    timezone: DEFAULT_TIMEZONE,
   });
 
   const openTodos = backbone.todoService.listTodos({

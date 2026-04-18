@@ -3,11 +3,13 @@ import type { Todo } from "../models.js";
 import {
   AddTodoInputSchema,
   CompleteTodoInputSchema,
+  UpdateTodoInputSchema,
   CancelTodoInputSchema,
   ListTodosInputSchema,
   SearchTodosInputSchema,
   type AddTodoInput,
   type CompleteTodoInput,
+  type UpdateTodoInput,
   type CancelTodoInput,
   type ListTodosInput,
   type SearchTodosInput,
@@ -95,6 +97,63 @@ export class TodoService {
     const row = this.db
       .prepare("SELECT * FROM todos WHERE id = ?")
       .get(info.lastInsertRowid) as TodoRow;
+
+    return mapTodo(row);
+  }
+
+  updateTodo(input: UpdateTodoInput): Todo {
+    const parsed = UpdateTodoInputSchema.parse(input);
+    const userId = this.users.getUserIdOrThrow(parsed.userExternalId);
+
+    const now = nowIso();
+    const sets: string[] = ["updated_at = @updated_at"];
+    const params: Record<string, unknown> = {
+      updated_at: now,
+      todo_id: parsed.todoId,
+      user_id: userId,
+    };
+
+    if (parsed.title !== undefined) {
+      sets.push("title = @title");
+      params.title = parsed.title;
+    }
+
+    if (parsed.priority !== undefined) {
+      sets.push("priority = @priority");
+      params.priority = parsed.priority;
+    }
+
+    if (parsed.clearNotes) {
+      sets.push("notes = NULL");
+    } else if (parsed.notes !== undefined) {
+      sets.push("notes = @notes");
+      params.notes = parsed.notes;
+    }
+
+    if (parsed.clearDueAt) {
+      sets.push("due_at = NULL");
+    } else if (parsed.dueAt !== undefined) {
+      sets.push("due_at = @due_at");
+      params.due_at = parsed.dueAt;
+    }
+
+    const updated = this.db
+      .prepare(
+        `
+          UPDATE todos
+          SET ${sets.join(", ")}
+          WHERE id = @todo_id AND user_id = @user_id
+        `,
+      )
+      .run(params);
+
+    if (updated.changes === 0) {
+      throw new Error(`Todo ${parsed.todoId} not found for user ${parsed.userExternalId}`);
+    }
+
+    const row = this.db
+      .prepare("SELECT * FROM todos WHERE id = ?")
+      .get(parsed.todoId) as TodoRow;
 
     return mapTodo(row);
   }

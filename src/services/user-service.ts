@@ -1,4 +1,5 @@
 import type { DB } from "../db/client.js";
+import { DEFAULT_TIMEZONE } from "../config.js";
 
 export class UserService {
   constructor(private readonly db: DB) {}
@@ -19,7 +20,7 @@ export class UserService {
     return userId;
   }
 
-  ensureUser(externalId: string, timezone = "UTC"): number {
+  ensureUser(externalId: string, timezone = DEFAULT_TIMEZONE): number {
     const existingId = this.getUserIdOrNull(externalId);
     if (existingId !== null) return existingId;
 

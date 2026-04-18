@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { createServer, type Server } from "node:http";
 import { StringDecoder } from "node:string_decoder";
 import TelegramBot, { type Message } from "node-telegram-bot-api";
+import { withDefaultTimezone } from "../config.js";
 import { createBackbone } from "../index.js";
 import type { Reminder } from "../models.js";
 
@@ -221,7 +222,7 @@ function formatDateTime12h(iso: string, timezone?: string): string {
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
-      timeZone: timezone && timezone.trim() ? timezone : "UTC",
+      timeZone: withDefaultTimezone(timezone),
     }).format(date);
   } catch {
     return new Intl.DateTimeFormat("en-US", {

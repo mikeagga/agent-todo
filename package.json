@@ -9,7 +9,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:init": "tsx src/scripts/init-db.ts",
     "demo": "tsx src/demo.ts",
-    "telegram:bot": "tsx src/telegram/bot.ts"
+    "telegram:bot": "tsx src/telegram/bot.ts",
+    "dashboard": "tsx src/web/dashboard-server.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

@@ -40,6 +40,9 @@ Set env vars (in `.env` or shell):
 - `REMINDER_SEND_RETRY_BASE_MS` (`1000` default; exponential backoff base)
 - `TELEGRAM_REMINDER_CHAT_ID` (optional target chat for reminder pushes; falls back to `TELEGRAM_ALLOWED_CHAT_ID`)
 - `TODO_USER_ID` (optional; defaults to `local-user` for reminder polling)
+- `DEFAULT_TIMEZONE` (optional; defaults to `UTC` and is used when timezone is omitted)
+- `DASHBOARD_HOST` / `DASHBOARD_PORT` (optional; dashboard bind address, defaults `0.0.0.0:8787`; if `DASHBOARD_PORT` is unset it falls back to platform `PORT`)
+- `DASHBOARD_TOKEN` (recommended in production; bearer token required for dashboard/API access when set)
 
 For webhook mode also set:
 - `TELEGRAM_WEBHOOK_URL` (public HTTPS URL Telegram should call)
@@ -53,14 +56,37 @@ Run:
 npm run telegram:bot
 ```
 
+## Web dashboard (server-friendly manual UI)
+
+A minimal built-in web dashboard is available for viewing and manually editing todos/reminders.
+
+Run:
+
+```bash
+npm run dashboard
+```
+
+Then open:
+
+- `http://<host>:<port>/`
+- health check: `http://<host>:<port>/health`
+
+If `DASHBOARD_TOKEN` is set, the dashboard requires:
+
+- `Authorization: Bearer <DASHBOARD_TOKEN>`
+
+You can paste the token in the dashboard UI header.
+
 Behavior:
 - Telegram bot forwards your exact message text to `pi --mode rpc`
 - It waits for the agent response and sends the assistant text back to Telegram
 - Reminder dispatcher runs server-side on an interval and pushes due reminders directly to Telegram
 - Reminder push uses DB queries only (`listDueReminders` + dispatch claim/receipt tracking + `markReminderSent`) and does not call the LLM
 - Reminder delivery includes retry/backoff and late-reminder labeling
+- Recurring reminders (`recurrenceRule`) are auto-rescheduled after successful send (supports `FREQ=MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY`, optional `INTERVAL`, `COUNT`, and `UNTIL`)
 - User-facing date/time display is formatted in 12-hour time (e.g. `Apr 17, 2026 9:30 PM`)
 - No local intent parsing happens in the Telegram layer
+- Dashboard/API endpoints support manual editing for server-side operations (todos + reminders)
 
 Default DB file:
 
@@ -93,7 +119,9 @@ DB_PATH=/absolute/path/my.db npm run db:init
 
 - `src/protocol/contracts.ts`
   - `add_todo`
+  - `update_todo` (edit title/notes/priority and reschedule or clear due date/time)
   - `add_reminder` (supports optional `todoId` link)
+  - `update_reminder` (edit text/time/timezone/recurrence without recreating)
   - `complete_todo`
   - `cancel_todo`
   - `list_todos`
@@ -112,6 +140,7 @@ DB_PATH=/absolute/path/my.db npm run db:init
 
 - `TodoService`
   - addTodo
+  - updateTodo
   - completeTodo
   - cancelTodo
   - listTodos
@@ -119,6 +148,7 @@ DB_PATH=/absolute/path/my.db npm run db:init
   - getTodoById
 - `ReminderService`
   - addReminder
+  - updateReminder
   - listDueReminders
   - listReminders
   - markReminderSent
@@ -142,11 +172,13 @@ It registers tools:
 
 - `resolve_time_expression` (NL date/time -> ISO UTC)
 - `add_todo`
+- `update_todo` (edit existing todo fields without recreating: title/notes/priority/due date)
 - `list_todos`
 - `search_todos` (better for older/history lookup)
 - `complete_todo`
 - `cancel_todo`
 - `add_reminder` (optional `todoId` linkage)
+- `update_reminder` (edit existing reminder fields without recreating: text/time/timezone/recurrence)
 - `add_todo_reminder` (link reminder directly to a todo, including offset-before-due)
 - `list_due_reminders`
 - `list_reminders` (list all reminders with filters)
@@ -179,8 +211,9 @@ Behavior safeguards:
   - pending actions are auto-expired on each new input
   - defaults: `SESSION_IDLE_MINUTES=60`, `PENDING_ACTION_TTL_MINUTES=15`
 - Date fields are validated as ISO date-time.
+- Recurrence rules are validated on input (`FREQ` required; optional `INTERVAL`, `COUNT`, `UNTIL`).
 - Natural-language time can be resolved using `resolve_time_expression` (powered by chrono-node + timezone handling).
-- `add_todo` / `add_reminder` can auto-resolve `timeExpression` when `dueAt`/`remindAt` is not provided.
+- `add_todo` / `update_todo` / `add_reminder` / `update_reminder` can auto-resolve `timeExpression` when `dueAt`/`remindAt` is not provided.
 - Linked reminders (`todoId`) are automatically cancelled when the todo is completed or cancelled.
 - If a time is ambiguous, tools return a structured clarification payload:
   - `details.responseType = "clarification"`
@@ -191,6 +224,7 @@ Behavior safeguards:
 Defaults:
 
 - `userExternalId` defaults to env `TODO_USER_ID` or `local-user`
+- `timezone` defaults to env `DEFAULT_TIMEZONE` or `UTC`
 - DB path defaults to `data/todo-reminders.db` (override with `DB_PATH`)
 
 ## Next recommended step

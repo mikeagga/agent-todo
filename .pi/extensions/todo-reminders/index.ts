@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import * as chrono from "chrono-node";
 import { DateTime } from "luxon";
+import { withDefaultTimezone } from "../../../src/config.ts";
 import { createBackbone } from "../../../src/index.ts";
 
 function toText(value: unknown): string {
@@ -15,8 +16,55 @@ function isIsoDateTime(value: string): boolean {
   return Number.isFinite(ms);
 }
 
+function isValidRecurrenceRule(rule: string): boolean {
+  const parts = rule
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) return false;
+
+  const kv = new Map<string, string>();
+  for (const part of parts) {
+    const [rawKey, ...rest] = part.split("=");
+    const key = rawKey?.trim().toUpperCase();
+    const value = rest.join("=").trim();
+    if (!key || !value) continue;
+    kv.set(key, value);
+  }
+
+  const freq = kv.get("FREQ")?.toUpperCase();
+  if (!freq || !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"].includes(freq)) {
+    return false;
+  }
+
+  const intervalRaw = kv.get("INTERVAL");
+  if (intervalRaw !== undefined) {
+    const interval = Number.parseInt(intervalRaw, 10);
+    if (!Number.isFinite(interval) || interval <= 0) return false;
+  }
+
+  const countRaw = kv.get("COUNT");
+  if (countRaw !== undefined) {
+    const count = Number.parseInt(countRaw, 10);
+    if (!Number.isFinite(count) || count <= 0) return false;
+  }
+
+  const untilRaw = kv.get("UNTIL");
+  if (untilRaw !== undefined) {
+    const compactUtc = /^\d{8}T\d{6}Z$/.test(untilRaw);
+    const compactDate = /^\d{8}$/.test(untilRaw);
+    const iso = Date.parse(untilRaw);
+    if (!compactUtc && !compactDate && !Number.isFinite(iso)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function formatDisplayDateTime(iso: string, timezone?: string): string {
-  const zone = timezone ?? "UTC";
+  const zone = withDefaultTimezone(timezone);
   const dt = DateTime.fromISO(iso, { zone: "utc" }).setZone(zone);
   if (!dt.isValid) return iso;
   return dt.toFormat("MMM d, yyyy h:mm a ZZZZ");
@@ -45,7 +93,7 @@ function resolveTimeExpression(input: {
   requireTime?: boolean;
   referenceIso?: string;
 }): TimeResolution {
-  const zone = input.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  const zone = withDefaultTimezone(input.timezone);
   const reference = input.referenceIso ? new Date(input.referenceIso) : new Date();
   if (Number.isNaN(reference.getTime())) {
     return {
@@ -265,7 +313,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     promptSnippet: "Resolve natural-language time phrases into precise ISO UTC datetimes.",
     promptGuidelines: [
       "Use this tool when user provides relative or fuzzy time language.",
-      "Call this before add_todo/add_reminder when dueAt/remindAt is not already explicit ISO.",
+      "Call this before add_todo/update_todo/add_reminder/update_reminder when dueAt/remindAt is not already explicit ISO.",
     ],
     parameters: Type.Object({
       expression: Type.String({ description: "Natural language time phrase, e.g. 'tomorrow at 9'" }),
@@ -367,6 +415,113 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: `Added todo #${created.id}: ${created.title}` }],
         details: created,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "update_todo",
+    label: "Update Todo",
+    description: "Update an existing todo (title, notes, priority, and/or due date/time)",
+    promptSnippet: "Edit an existing todo without recreating it.",
+    promptGuidelines: [
+      "Use this tool when the user asks to edit or reschedule an existing todo.",
+      "Pass clearDueAt=true when the user wants to remove the due date.",
+      "Pass clearNotes=true when the user wants to remove notes.",
+      "If user gives natural language time, call resolve_time_expression first and pass dueAt as ISO UTC.",
+    ],
+    parameters: Type.Object({
+      userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
+      todoId: Type.Number({ description: "Todo id to update" }),
+      title: Type.Optional(Type.String({ description: "Updated todo title" })),
+      notes: Type.Optional(Type.String({ description: "Updated todo notes" })),
+      clearNotes: Type.Optional(Type.Boolean({ description: "Set true to remove notes" })),
+      priority: Type.Optional(StringEnum(["low", "normal", "high", "urgent"] as const)),
+      dueAt: Type.Optional(Type.String({ description: "ISO date-time, e.g. 2026-04-20T18:00:00Z" })),
+      timeExpression: Type.Optional(Type.String({ description: "Natural-language time phrase, e.g. tomorrow at 9" })),
+      timezone: Type.Optional(Type.String({ description: "IANA timezone used when parsing timeExpression" })),
+      clearDueAt: Type.Optional(Type.Boolean({ description: "Set true to remove due date/time" })),
+    }),
+    async execute(_toolCallId, params) {
+      if (params.clearDueAt && (params.dueAt || params.timeExpression)) {
+        return clarification("Use either clearDueAt=true OR a new dueAt/timeExpression, not both.", {
+          field: "clearDueAt",
+        });
+      }
+
+      if (params.clearNotes && params.notes !== undefined) {
+        return clarification("Use either clearNotes=true OR notes, not both.", {
+          field: "clearNotes",
+        });
+      }
+
+      let dueAt = params.dueAt;
+
+      if (dueAt && !isIsoDateTime(dueAt)) {
+        return clarification("dueAt must be an ISO date-time (e.g. 2026-04-20T18:00:00Z).", {
+          field: "dueAt",
+          received: dueAt,
+        });
+      }
+
+      if (!dueAt && params.timeExpression) {
+        const resolved = resolveTimeExpression({
+          expression: params.timeExpression,
+          timezone: params.timezone,
+          requireTime: true,
+        });
+
+        if (!resolved.ok) {
+          return clarification(`Could not resolve todo time: ${resolved.reason ?? "unknown reason"}`, {
+            expression: params.timeExpression,
+            ...resolved,
+          });
+        }
+
+        if (resolved.needsClarification) {
+          return clarification(
+            `Resolved "${params.timeExpression}" to ${resolved.isoUtc}, but it may be ambiguous (${resolved.reason}). Confirm exact time.`,
+            { expression: params.timeExpression, ...resolved },
+          );
+        }
+
+        dueAt = resolved.isoUtc;
+      }
+
+      const hasAnyUpdate =
+        params.title !== undefined ||
+        params.notes !== undefined ||
+        params.clearNotes === true ||
+        params.priority !== undefined ||
+        dueAt !== undefined ||
+        params.clearDueAt === true;
+
+      if (!hasAnyUpdate) {
+        return clarification(
+          "Provide at least one field to update (title, notes, priority, dueAt/timeExpression, clearNotes, clearDueAt).",
+          { field: "todoId" },
+        );
+      }
+
+      const updated = getBackbone().todoService.updateTodo({
+        userExternalId: params.userExternalId ?? defaultUserExternalId,
+        todoId: params.todoId,
+        title: params.title,
+        notes: params.notes,
+        clearNotes: params.clearNotes,
+        priority: params.priority,
+        dueAt,
+        clearDueAt: params.clearDueAt,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Updated todo #${updated.id}: ${updated.title}${updated.dueAt ? ` (due ${formatDisplayDateTime(updated.dueAt)})` : " (no due date)"}`,
+          },
+        ],
+        details: updated,
       };
     },
   });
@@ -609,6 +764,13 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         });
       }
 
+      if (params.recurrenceRule && !isValidRecurrenceRule(params.recurrenceRule)) {
+        return clarification(
+          "Invalid recurrenceRule. Use FREQ=MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY with optional INTERVAL, COUNT, UNTIL.",
+          { field: "recurrenceRule", received: params.recurrenceRule },
+        );
+      }
+
       const created = getBackbone().reminderService.addReminder({
         userExternalId: params.userExternalId ?? defaultUserExternalId,
         todoId: params.todoId,
@@ -627,6 +789,115 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
           },
         ],
         details: created,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "update_reminder",
+    label: "Update Reminder",
+    description: "Update an existing reminder (text, time, timezone, and/or recurrence)",
+    promptSnippet: "Edit an existing reminder without recreating it.",
+    promptGuidelines: [
+      "Use this tool when the user asks to edit/reschedule an existing reminder.",
+      "If user gives natural language time, call resolve_time_expression first and pass remindAt as ISO UTC.",
+      "Use clearRecurrenceRule=true to remove recurrence.",
+    ],
+    parameters: Type.Object({
+      userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
+      reminderId: Type.Number({ description: "Reminder id to update" }),
+      text: Type.Optional(Type.String({ description: "Updated reminder text" })),
+      remindAt: Type.Optional(Type.String({ description: "ISO date-time, e.g. 2026-04-20T17:00:00Z" })),
+      timeExpression: Type.Optional(Type.String({ description: "Natural-language time phrase, e.g. tomorrow at 9" })),
+      timezone: Type.Optional(Type.String({ description: "IANA timezone, e.g. America/New_York" })),
+      recurrenceRule: Type.Optional(Type.String({ description: "RRULE string" })),
+      clearRecurrenceRule: Type.Optional(Type.Boolean({ description: "Set true to remove recurrence" })),
+    }),
+    async execute(_toolCallId, params) {
+      if (params.remindAt && params.timeExpression) {
+        return clarification("Use either remindAt or timeExpression, not both.", {
+          field: "remindAt",
+        });
+      }
+
+      if (params.clearRecurrenceRule && params.recurrenceRule !== undefined) {
+        return clarification("Use either recurrenceRule or clearRecurrenceRule=true, not both.", {
+          field: "recurrenceRule",
+        });
+      }
+
+      let remindAt = params.remindAt;
+
+      if (remindAt && !isIsoDateTime(remindAt)) {
+        return clarification("remindAt must be an ISO date-time (e.g. 2026-04-20T17:00:00Z).", {
+          field: "remindAt",
+          received: remindAt,
+        });
+      }
+
+      if (!remindAt && params.timeExpression) {
+        const resolved = resolveTimeExpression({
+          expression: params.timeExpression,
+          timezone: params.timezone,
+          requireTime: true,
+        });
+
+        if (!resolved.ok) {
+          return clarification(`Could not resolve reminder time: ${resolved.reason ?? "unknown reason"}`, {
+            expression: params.timeExpression,
+            ...resolved,
+          });
+        }
+
+        if (resolved.needsClarification) {
+          return clarification(
+            `Resolved "${params.timeExpression}" to ${resolved.isoUtc}, but it may be ambiguous (${resolved.reason}). Confirm exact time.`,
+            { expression: params.timeExpression, ...resolved },
+          );
+        }
+
+        remindAt = resolved.isoUtc;
+      }
+
+      if (params.recurrenceRule && !isValidRecurrenceRule(params.recurrenceRule)) {
+        return clarification(
+          "Invalid recurrenceRule. Use FREQ=MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY with optional INTERVAL, COUNT, UNTIL.",
+          { field: "recurrenceRule", received: params.recurrenceRule },
+        );
+      }
+
+      const hasAnyUpdate =
+        params.text !== undefined ||
+        remindAt !== undefined ||
+        params.timezone !== undefined ||
+        params.recurrenceRule !== undefined ||
+        params.clearRecurrenceRule === true;
+
+      if (!hasAnyUpdate) {
+        return clarification(
+          "Provide at least one field to update (text, remindAt/timeExpression, timezone, recurrenceRule, clearRecurrenceRule).",
+          { field: "reminderId" },
+        );
+      }
+
+      const updated = getBackbone().reminderService.updateReminder({
+        userExternalId: params.userExternalId ?? defaultUserExternalId,
+        reminderId: params.reminderId,
+        text: params.text,
+        remindAt,
+        timezone: params.timezone,
+        recurrenceRule: params.recurrenceRule,
+        clearRecurrenceRule: params.clearRecurrenceRule,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Updated reminder #${updated.id}: ${updated.text} @ ${formatDisplayDateTime(updated.remindAt, updated.timezone)}`,
+          },
+        ],
+        details: updated,
       };
     },
   });
