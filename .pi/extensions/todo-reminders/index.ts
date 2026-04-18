@@ -346,8 +346,8 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     name: "resolve_time_expression",
     label: "Resolve Time Expression",
     description:
-      "Resolve natural-language date/time expressions (e.g. 'tomorrow at 9') into an ISO UTC datetime with confidence.",
-    promptSnippet: "Resolve natural-language time phrases into precise ISO UTC datetimes.",
+      "Resolve natural-language date/time expressions (e.g. 'tomorrow at 9') into an ISO datetime using the user's timezone, then normalize for storage.",
+    promptSnippet: "Resolve natural-language time phrases into precise ISO datetimes using the user's timezone.",
     promptGuidelines: [
       "Use this tool when user provides relative or fuzzy time language.",
       "Call this before add_todo/update_todo/add_reminder/update_reminder when dueAt/remindAt is not already explicit ISO.",
@@ -376,8 +376,8 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       }
 
       const message = resolved.needsClarification
-        ? `Resolved "${params.expression}" to ${resolved.isoUtc}, but clarification is recommended (${resolved.reason}).`
-        : `Resolved "${params.expression}" to ${resolved.isoUtc} (${resolved.timezoneUsed}).`;
+        ? `Resolved "${params.expression}" to ${resolved.isoUtc} (interpreted in ${resolved.timezoneUsed}), but clarification is recommended (${resolved.reason}).`
+        : `Resolved "${params.expression}" to ${resolved.isoUtc} (interpreted in ${resolved.timezoneUsed}).`;
 
       return {
         content: [{ type: "text", text: message }],
@@ -393,7 +393,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     promptSnippet: "Create todo items in the local database with optional due date and priority.",
     promptGuidelines: [
       "Prefer this tool when the user asks to create a task or todo.",
-      "If user gives natural language time, call resolve_time_expression first and pass dueAt as ISO UTC.",
+      "If user gives natural language time, call resolve_time_expression first and pass dueAt as ISO datetime (timezone-aware; normalized for storage).",
       "Use ISO date-time strings for dueAt when the time is known.",
     ],
     parameters: Type.Object({
@@ -465,7 +465,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       "Use this tool when the user asks to edit or reschedule an existing todo.",
       "Pass clearDueAt=true when the user wants to remove the due date.",
       "Pass clearNotes=true when the user wants to remove notes.",
-      "If user gives natural language time, call resolve_time_expression first and pass dueAt as ISO UTC.",
+      "If user gives natural language time, call resolve_time_expression first and pass dueAt as ISO datetime (timezone-aware; normalized for storage).",
     ],
     parameters: Type.Object({
       userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
@@ -799,9 +799,9 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     promptSnippet: "Create time-based reminders in the local database.",
     promptGuidelines: [
       "Use this tool when the user asks to be reminded at a specific time.",
-      "If user gives natural language time, call resolve_time_expression first and pass remindAt as ISO UTC.",
+      "If user gives natural language time, call resolve_time_expression first and pass remindAt as ISO datetime (timezone-aware; normalized for storage).",
       "If reminder is for a specific todo, pass todoId so it is linked and auto-cleaned when todo completes/cancels.",
-      "Pass remindAt as ISO date-time in UTC or with offset.",
+      "Pass remindAt as ISO date-time with timezone/offset context; system normalizes for storage.",
     ],
     parameters: Type.Object({
       userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
@@ -889,7 +889,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     promptSnippet: "Edit an existing reminder without recreating it.",
     promptGuidelines: [
       "Use this tool when the user asks to edit/reschedule an existing reminder.",
-      "If user gives natural language time, call resolve_time_expression first and pass remindAt as ISO UTC.",
+      "If user gives natural language time, call resolve_time_expression first and pass remindAt as ISO datetime (timezone-aware; normalized for storage).",
       "Use clearRecurrenceRule=true to remove recurrence.",
     ],
     parameters: Type.Object({

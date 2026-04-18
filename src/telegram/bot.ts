@@ -556,10 +556,7 @@ async function handleMessage(msg: Message): Promise<void> {
   const text = msg.text.trim();
 
   if (text === "/start" || text === "/help") {
-    await sendTelegramText(
-      chatId,
-      "Relay mode active ✅\nI forward your exact message to the pi agent and send the agent response back here.",
-    );
+    await sendTelegramText(chatId, "reyaly mode active");
     return;
   }
 
