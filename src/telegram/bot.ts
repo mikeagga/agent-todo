@@ -41,6 +41,7 @@ const REMINDER_SEND_RETRY_BASE_MS = Number.parseInt(process.env.REMINDER_SEND_RE
 
 const AUTO_PI_SCHEDULES_FILE = path.resolve(process.cwd(), ".pi", "auto-pi-schedules.json");
 const AUTO_PI_DEFAULT_TIMEZONE = withDefaultTimezone(process.env.DEFAULT_TIMEZONE);
+const RELAY_DEFAULT_TIMEZONE = withDefaultTimezone(process.env.DEFAULT_TIMEZONE);
 
 type RpcResponse = {
   id?: string;
@@ -493,8 +494,9 @@ function denyUnauthorized(msg: Message): boolean {
 }
 
 function applyPromptPrefix(userPrompt: string): string {
-  if (!PI_PROMPT_PREFIX) return userPrompt;
-  return `${PI_PROMPT_PREFIX}\n\nUser request:\n${userPrompt}`;
+  const basePrefix = `Default user timezone: ${RELAY_DEFAULT_TIMEZONE}. Assume this timezone unless the user explicitly provides a different one. Do not ask for timezone if not required.`;
+  const mergedPrefix = PI_PROMPT_PREFIX ? `${PI_PROMPT_PREFIX}\n${basePrefix}` : basePrefix;
+  return `${mergedPrefix}\n\nUser request:\n${userPrompt}`;
 }
 
 async function sendTelegramText(chatId: number, text: string): Promise<void> {
