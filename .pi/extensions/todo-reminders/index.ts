@@ -87,6 +87,43 @@ type TimeResolution = {
   parsedText?: string;
 };
 
+type DayRange = {
+  ok: boolean;
+  day?: string;
+  timezoneUsed?: string;
+  fromUtcIso?: string;
+  toUtcIso?: string;
+  reason?: string;
+};
+
+function resolveDayRange(input: { day?: string; timezone?: string }): DayRange {
+  const zone = withDefaultTimezone(input.timezone);
+  const day = (input.day ?? DateTime.utc().setZone(zone).toFormat("yyyy-MM-dd")).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    return { ok: false, reason: "day must be in YYYY-MM-DD format" };
+  }
+
+  const localStart = DateTime.fromFormat(day, "yyyy-MM-dd", { zone }).startOf("day");
+  const localEnd = localStart.endOf("day");
+  if (!localStart.isValid || !localEnd.isValid) {
+    return { ok: false, reason: "Invalid day or timezone" };
+  }
+
+  const fromUtcIso = localStart.toUTC().toISO();
+  const toUtcIso = localEnd.toUTC().toISO();
+  if (!fromUtcIso || !toUtcIso) {
+    return { ok: false, reason: "Could not resolve day range" };
+  }
+
+  return {
+    ok: true,
+    day,
+    timezoneUsed: zone,
+    fromUtcIso,
+    toUtcIso,
+  };
+}
+
 function resolveTimeExpression(input: {
   expression: string;
   timezone?: string;
@@ -522,6 +559,58 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
           },
         ],
         details: updated,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "list_todos_by_day",
+    label: "List Todos By Day",
+    description: "List todos due on a specific local day",
+    promptSnippet: "Get todos for a specific day in a timezone.",
+    parameters: Type.Object({
+      userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
+      day: Type.Optional(Type.String({ description: "Day in YYYY-MM-DD, e.g. 2026-04-20" })),
+      timezone: Type.Optional(Type.String({ description: "IANA timezone for day boundaries, e.g. America/New_York" })),
+      status: Type.Optional(StringEnum(["open", "done", "cancelled"] as const)),
+      limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
+    }),
+    async execute(_toolCallId, params) {
+      const range = resolveDayRange({ day: params.day, timezone: params.timezone });
+      if (!range.ok) {
+        return clarification(`Could not resolve day range. ${range.reason ?? "Unknown reason"}`, {
+          field: "day",
+          received: params.day,
+          timezone: params.timezone,
+        });
+      }
+
+      const todos = getBackbone().todoService
+        .listTodos({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          status: params.status,
+          dueBefore: range.toUtcIso,
+          limit: params.limit,
+        })
+        .filter((todo) => !!todo.dueAt && Date.parse(todo.dueAt) >= Date.parse(range.fromUtcIso!));
+
+      const lines = todos.length
+        ? todos.map(
+            (todo, index) =>
+              `${index + 1}. #${todo.id} [${todo.status}] ${todo.title}${todo.dueAt ? ` (due ${formatDisplayDateTime(todo.dueAt, range.timezoneUsed)})` : ""}`,
+          )
+        : [`No todos due on ${range.day} (${range.timezoneUsed}).`];
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: {
+          day: range.day,
+          timezone: range.timezoneUsed,
+          fromUtc: range.fromUtcIso,
+          toUtc: range.toUtcIso,
+          count: todos.length,
+          todos,
+        },
       };
     },
   });
@@ -1015,6 +1104,59 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: lines.join("\n") }],
         details: { asOf, count: reminders.length, reminders },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "list_reminders_by_day",
+    label: "List Reminders By Day",
+    description: "List reminders scheduled on a specific local day",
+    promptSnippet: "Get reminders for a specific day in a timezone.",
+    parameters: Type.Object({
+      userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
+      day: Type.Optional(Type.String({ description: "Day in YYYY-MM-DD, e.g. 2026-04-20" })),
+      timezone: Type.Optional(Type.String({ description: "IANA timezone for day boundaries, e.g. America/New_York" })),
+      status: Type.Optional(StringEnum(["pending", "sent", "cancelled"] as const)),
+      todoId: Type.Optional(Type.Number({ description: "Optional filter by linked todo id" })),
+      limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
+    }),
+    async execute(_toolCallId, params) {
+      const range = resolveDayRange({ day: params.day, timezone: params.timezone });
+      if (!range.ok) {
+        return clarification(`Could not resolve day range. ${range.reason ?? "Unknown reason"}`, {
+          field: "day",
+          received: params.day,
+          timezone: params.timezone,
+        });
+      }
+
+      const reminders = getBackbone().reminderService.listReminders({
+        userExternalId: params.userExternalId ?? defaultUserExternalId,
+        status: params.status,
+        todoId: params.todoId,
+        from: range.fromUtcIso,
+        to: range.toUtcIso,
+        limit: params.limit,
+      });
+
+      const lines = reminders.length
+        ? reminders.map(
+            (r, index) =>
+              `${index + 1}. #${r.id} [${r.status}] ${r.text} @ ${formatDisplayDateTime(r.remindAt, range.timezoneUsed)}${r.todoId ? ` (todo #${r.todoId})` : ""}`,
+          )
+        : [`No reminders on ${range.day} (${range.timezoneUsed}).`];
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: {
+          day: range.day,
+          timezone: range.timezoneUsed,
+          fromUtc: range.fromUtcIso,
+          toUtc: range.toUtcIso,
+          count: reminders.length,
+          reminders,
+        },
       };
     },
   });

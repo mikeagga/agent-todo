@@ -1,0 +1,20 @@
+{
+  "enabled": false,
+  "pollSeconds": 30,
+  "defaultTimezone": "UTC",
+  "defaultChatId": null,
+  "schedules": [
+    {
+      "id": "morning-agenda",
+      "time": "08:00",
+      "timezone": "UTC",
+      "prompt": "Give me a concise morning agenda: list today's due todos/reminders, what's overdue, and top priorities."
+    },
+    {
+      "id": "end-of-day-closeout",
+      "time": "18:00",
+      "timezone": "UTC",
+      "prompt": "Give me an end-of-day closeout: what I completed, what is still open, and remind me to mark finished todos as done."
+    }
+  ]
+}

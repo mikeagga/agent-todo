@@ -1,21 +1,17 @@
 # agent-todo backbone (local first)
 
-This repo contains the local-first backbone + a project-local pi extension + Telegram relay for your personal todo/reminder project:
+Local-first todo/reminder backend with:
 
 - SQLite schema + migrations
 - strongly typed protocol contracts
 - service layer for todo/reminder/memory primitives
 - project-local pi extension (`.pi/extensions/todo-reminders`)
 - Telegram relay bot (`src/telegram/bot.ts`)
-- no HTTP server yet
+- built-in web dashboard/API (`src/web/dashboard-server.ts`)
 
-## Stack
+---
 
-- TypeScript + Node.js
-- SQLite via `better-sqlite3`
-- Zod for protocol validation
-
-## Quick start
+## 1) Quick start (local)
 
 ```bash
 npm install
@@ -23,42 +19,196 @@ npm run db:init
 npm run demo
 ```
 
-## Telegram integration (relay mode: polling or webhook)
-
-Set env vars (in `.env` or shell):
-
-- `TELEGRAM_BOT_TOKEN` (required)
-- `TELEGRAM_ALLOWED_CHAT_ID` (recommended; restricts bot to your chat)
-- `TELEGRAM_MODE` (`polling` default, or `webhook`)
-- `PI_PROVIDER` / `PI_MODEL` (optional; choose provider/model for rpc process)
-- `PI_BIN` (optional; default `pi`)
-- `PI_EXTRA_ARGS` (optional; additional args for `pi --mode rpc`)
-- `REMINDER_NOTIFICATIONS_ENABLED` (`true` default; set `false` to disable server push reminders)
-- `REMINDER_POLL_SECONDS` (`30` default)
-- `REMINDER_DISPATCH_STALE_SECONDS` (`120` default; retry claim window for stuck dispatches)
-- `REMINDER_SEND_MAX_RETRIES` (`3` default)
-- `REMINDER_SEND_RETRY_BASE_MS` (`1000` default; exponential backoff base)
-- `TELEGRAM_REMINDER_CHAT_ID` (optional target chat for reminder pushes; falls back to `TELEGRAM_ALLOWED_CHAT_ID`)
-- `TODO_USER_ID` (optional; defaults to `local-user` for reminder polling)
-- `DEFAULT_TIMEZONE` (optional; defaults to `UTC` and is used when timezone is omitted)
-- `DASHBOARD_HOST` / `DASHBOARD_PORT` (optional; dashboard bind address, defaults `0.0.0.0:8787`; if `DASHBOARD_PORT` is unset it falls back to platform `PORT`)
-- `DASHBOARD_TOKEN` (recommended in production; bearer token required for dashboard/API access when set)
-
-For webhook mode also set:
-- `TELEGRAM_WEBHOOK_URL` (public HTTPS URL Telegram should call)
-- `TELEGRAM_WEBHOOK_PATH` (default `/telegram/webhook`)
-- `TELEGRAM_WEBHOOK_SECRET` (optional but recommended)
-- `TELEGRAM_WEBHOOK_HOST` / `TELEGRAM_WEBHOOK_PORT` (local listener, defaults `0.0.0.0:8788`)
-
-Run:
+Useful commands:
 
 ```bash
-npm run telegram:bot
+npm run telegram:bot   # Telegram relay + reminder dispatcher + optional auto schedules
+npm run dashboard      # web dashboard + internal JSON API
+npm run typecheck
 ```
 
-## Web dashboard (server-friendly manual UI)
+Default DB file:
 
-A minimal built-in web dashboard is available for viewing and manually editing todos/reminders.
+- `data/todo-reminders.db`
+
+Override DB path:
+
+```bash
+DB_PATH=/absolute/path/my.db npm run db:init
+```
+
+---
+
+## 2) Runtime features
+
+### Telegram relay bot
+
+- Forwards your Telegram text to `pi --mode rpc`
+- Sends assistant response back to Telegram
+- Optional reminder dispatcher pushes due reminders directly (without LLM)
+
+### Reminder dispatcher
+
+- Polls due reminders on interval
+- Retry/backoff on Telegram send failures
+- Dispatch claim/receipt tracking
+- Handles recurring reminders after send
+
+Supported recurrence fields in `recurrenceRule`:
+
+- `FREQ=MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY` (required)
+- `INTERVAL` (optional)
+- `COUNT` (optional)
+- `UNTIL` (optional)
+
+### Auto PI schedules
+
+Configured via file (not env vars):
+
+- `.pi/auto-pi-schedules.json`
+
+Allows scheduled prompts (e.g. morning agenda / end-of-day closeout) to run and send output to Telegram.
+
+### Web dashboard
+
+- View/filter todos and reminders
+- Manually edit todo/reminder fields
+- Complete/cancel todos and cancel reminders
+- Internal JSON endpoints under `/api/*`
+
+---
+
+## 3) Configuration
+
+Set env vars in `.env` or your hosting platform.
+
+### Core
+
+- `DB_PATH` (recommended explicit in production)
+- `TODO_USER_ID` (default `local-user`)
+- `DEFAULT_TIMEZONE` (default `UTC`)
+
+### Telegram bot
+
+- `TELEGRAM_BOT_TOKEN` (**required**)
+- `TELEGRAM_ALLOWED_CHAT_ID` (recommended)
+- `TELEGRAM_MODE` (`polling` default, or `webhook`)
+- `TELEGRAM_REMINDER_CHAT_ID` (optional; falls back to allowed chat)
+
+Webhook mode only:
+
+- `TELEGRAM_WEBHOOK_URL`
+- `TELEGRAM_WEBHOOK_PATH` (default `/telegram/webhook`)
+- `TELEGRAM_WEBHOOK_SECRET` (recommended)
+- `TELEGRAM_WEBHOOK_HOST` / `TELEGRAM_WEBHOOK_PORT`
+
+### PI relay process
+
+- `PI_BIN` (default `pi`)
+- `PI_PROVIDER` / `PI_MODEL` (optional)
+- `PI_EXTRA_ARGS` (optional)
+
+### Reminder dispatcher tuning
+
+- `REMINDER_NOTIFICATIONS_ENABLED` (`true` default)
+- `REMINDER_POLL_SECONDS` (`30` default)
+- `REMINDER_DISPATCH_STALE_SECONDS` (`120` default)
+- `REMINDER_SEND_MAX_RETRIES` (`3` default)
+- `REMINDER_SEND_RETRY_BASE_MS` (`1000` default)
+
+### Dashboard
+
+- `DASHBOARD_HOST` (default `0.0.0.0`)
+- `DASHBOARD_PORT` (default `8787`, falls back to platform `PORT`)
+- `DASHBOARD_TOKEN` (recommended in production)
+
+Auth behavior:
+
+- `GET /` dashboard page loads without auth
+- `/api/*` requires `Authorization: Bearer <DASHBOARD_TOKEN>` when token is set
+- You can open once with `?token=<DASHBOARD_TOKEN>` to auto-fill/store token in UI
+
+---
+
+## 4) Auto PI schedules file
+
+Path:
+
+- `.pi/auto-pi-schedules.json`
+
+Example:
+
+```json
+{
+  "enabled": true,
+  "pollSeconds": 30,
+  "defaultTimezone": "America/New_York",
+  "defaultChatId": "8793068235",
+  "schedules": [
+    {
+      "id": "morning-agenda",
+      "time": "08:00",
+      "prompt": "Give me a concise morning agenda for today."
+    },
+    {
+      "id": "end-of-day-closeout",
+      "time": "18:00",
+      "prompt": "Give me an end-of-day closeout checklist."
+    }
+  ]
+}
+```
+
+---
+
+## 5) Extension tools available
+
+From `.pi/extensions/todo-reminders/index.ts`:
+
+- `resolve_time_expression`
+- `add_todo`
+- `update_todo`
+- `list_todos`
+- `list_todos_by_day`
+- `search_todos`
+- `complete_todo`
+- `cancel_todo`
+- `add_reminder`
+- `update_reminder`
+- `add_todo_reminder`
+- `list_due_reminders`
+- `list_reminders`
+- `list_reminders_by_day`
+- `cancel_reminder`
+
+Command:
+
+- `/todo-db-health`
+
+---
+
+## 6) Data model and services
+
+### Database migrations
+
+- `src/db/migrations/001_init.sql`
+- `src/db/migrations/002_link_reminders_todos.sql`
+- `src/db/migrations/003_conversation_memory.sql`
+- `src/db/migrations/004_reminder_dispatch_receipts.sql`
+
+### Services
+
+- `TodoService`: add/update/complete/cancel/list/search/get
+- `ReminderService`: add/update/list/send/cancel + recurrence + dispatch receipts
+- `MemoryService`: user settings/memory + sessions + pending confirmations
+
+Entry point:
+
+- `createBackbone()` in `src/index.ts`
+
+---
+
+## 7) Local dashboard usage
 
 Run:
 
@@ -66,167 +216,51 @@ Run:
 npm run dashboard
 ```
 
-Then open:
+Open:
 
-- `http://<host>:<port>/`
-- health check: `http://<host>:<port>/health`
+- `http://127.0.0.1:8787/`
+- `http://127.0.0.1:8787/health`
 
-If `DASHBOARD_TOKEN` is set, the dashboard requires:
+If `DASHBOARD_TOKEN` is set, paste it in the dashboard header token field.
 
-- `Authorization: Bearer <DASHBOARD_TOKEN>`
+---
 
-You can paste the token in the dashboard UI header.
+## 8) Railway deployment
 
-Behavior:
-- Telegram bot forwards your exact message text to `pi --mode rpc`
-- It waits for the agent response and sends the assistant text back to Telegram
-- Reminder dispatcher runs server-side on an interval and pushes due reminders directly to Telegram
-- Reminder push uses DB queries only (`listDueReminders` + dispatch claim/receipt tracking + `markReminderSent`) and does not call the LLM
-- Reminder delivery includes retry/backoff and late-reminder labeling
-- Recurring reminders (`recurrenceRule`) are auto-rescheduled after successful send (supports `FREQ=MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY`, optional `INTERVAL`, `COUNT`, and `UNTIL`)
-- User-facing date/time display is formatted in 12-hour time (e.g. `Apr 17, 2026 9:30 PM`)
-- No local intent parsing happens in the Telegram layer
-- Dashboard/API endpoints support manual editing for server-side operations (todos + reminders)
+Current Docker startup runs both in one container:
 
-Default DB file:
+- `telegram:bot` (background)
+- `dashboard` (foreground web process)
 
-- `data/todo-reminders.db`
+Recommended Railway setup:
 
-You can override with:
+- Mount a volume at `/data`
+- Set `DB_PATH=/data/todo-reminders.db`
+- Set `DASHBOARD_HOST=0.0.0.0`
+- Set `DASHBOARD_TOKEN=<strong-random-token>`
+- Usually use `TELEGRAM_MODE=polling`
 
-```bash
-DB_PATH=/absolute/path/my.db npm run db:init
-```
+---
 
-## What was added
+## 9) Long-term memory / behavior configuration
 
-### Database
+There are two practical “long-term memory” layers right now:
 
-- `src/db/migrations/001_init.sql`
-  - `users`
-  - `todos`
-  - `reminders`
-  - `schema_migrations`
-- `src/db/migrations/002_link_reminders_todos.sql`
-  - links reminders to todos via `todo_id`
-- `src/db/migrations/003_conversation_memory.sql`
-  - `user_settings` (timezone/defaults/preferences)
-  - `user_memory` (long-term facts/preferences)
-  - `conversation_sessions` (short-term session lifecycle)
-  - `pending_actions` (confirmation/clarification tokens + TTL)
+1. **Behavior/instructions memory** (recommended)
+   - Put persistent response preferences in:
+     - project: `.pi/AGENTS.md`
+     - global: `~/.pi/agent/AGENTS.md`
+   - Example: response style, verbosity, decision rules, coding conventions.
 
-### Protocol contracts (tool/API-friendly)
+2. **Scheduled behavior memory**
+   - Put recurring assistant routines in:
+     - `.pi/auto-pi-schedules.json`
 
-- `src/protocol/contracts.ts`
-  - `add_todo`
-  - `update_todo` (edit title/notes/priority and reschedule or clear due date/time)
-  - `add_reminder` (supports optional `todoId` link)
-  - `update_reminder` (edit text/time/timezone/recurrence without recreating)
-  - `complete_todo`
-  - `cancel_todo`
-  - `list_todos`
-  - `search_todos`
-  - `list_due_reminders`
-  - `list_reminders`
-  - `cancel_reminder`
-- Extension-only tool contract addition in `.pi/extensions/todo-reminders/index.ts`
-  - `add_todo_reminder`
+Note: database `user_memory` exists (via `MemoryService`) but there is no user-facing tool yet to edit it directly from chat/dashboard. If you want, next step is adding explicit tools/UI for memory CRUD (`remember`, `recall`, `forget`).
 
-### Future HTTP contract (spec only)
+---
 
-- `src/protocol/openapi.yaml`
+## 10) Future HTTP contract
 
-### Services
-
-- `TodoService`
-  - addTodo
-  - updateTodo
-  - completeTodo
-  - cancelTodo
-  - listTodos
-  - searchTodos
-  - getTodoById
-- `ReminderService`
-  - addReminder
-  - updateReminder
-  - listDueReminders
-  - listReminders
-  - markReminderSent
-  - cancelReminder
-- `MemoryService`
-  - user settings/memory upsert + reads
-  - conversation session open/touch/close with idle rollover support
-  - pending action token lifecycle (create/read/update/expire)
-
-### Entry point
-
-- `createBackbone()` in `src/index.ts`
-
-## Pi extension (started)
-
-I added a project-local pi extension at:
-
-- `.pi/extensions/todo-reminders/index.ts`
-
-It registers tools:
-
-- `resolve_time_expression` (NL date/time -> ISO UTC)
-- `add_todo`
-- `update_todo` (edit existing todo fields without recreating: title/notes/priority/due date)
-- `list_todos`
-- `search_todos` (better for older/history lookup)
-- `complete_todo`
-- `cancel_todo`
-- `add_reminder` (optional `todoId` linkage)
-- `update_reminder` (edit existing reminder fields without recreating: text/time/timezone/recurrence)
-- `add_todo_reminder` (link reminder directly to a todo, including offset-before-due)
-- `list_due_reminders`
-- `list_reminders` (list all reminders with filters)
-- `cancel_reminder`
-
-and a command:
-
-- `/todo-db-health`
-
-### Use it in pi
-
-From this project directory:
-
-1. Ensure DB is initialized: `npm run db:init`
-2. Start pi in this repo (project-local extensions auto-load)
-3. Run `/reload` if pi was already open
-4. Test with prompts like:
-   - `add a todo to buy eggs tomorrow at 9am`
-   - `show my open todos`
-   - `remind me in 30 minutes to stretch`
-
-Behavior safeguards:
-
-- Destructive actions (`complete_todo`, `cancel_todo`, `cancel_reminder`) are channel-friendly:
-  - they return `responseType: "confirmation_required"` unless `confirmed: true` is passed
-  - responses include `confirmationToken` + `expiresAt` for server-side confirmation tracking
-  - this works in Telegram without CLI/TUI confirmation dialogs
-- Conversation/session lifecycle is automatic:
-  - every input touch checks/rolls over active session by idle timeout
-  - pending actions are auto-expired on each new input
-  - defaults: `SESSION_IDLE_MINUTES=60`, `PENDING_ACTION_TTL_MINUTES=15`
-- Date fields are validated as ISO date-time.
-- Recurrence rules are validated on input (`FREQ` required; optional `INTERVAL`, `COUNT`, `UNTIL`).
-- Natural-language time can be resolved using `resolve_time_expression` (powered by chrono-node + timezone handling).
-- `add_todo` / `update_todo` / `add_reminder` / `update_reminder` can auto-resolve `timeExpression` when `dueAt`/`remindAt` is not provided.
-- Linked reminders (`todoId`) are automatically cancelled when the todo is completed or cancelled.
-- If a time is ambiguous, tools return a structured clarification payload:
-  - `details.responseType = "clarification"`
-  - `details.needsClarification = true`
-  - `details.question = "..."`
-  This is easier for Telegram relays to forward as a direct follow-up question.
-
-Defaults:
-
-- `userExternalId` defaults to env `TODO_USER_ID` or `local-user`
-- `timezone` defaults to env `DEFAULT_TIMEZONE` or `UTC`
-- DB path defaults to `data/todo-reminders.db` (override with `DB_PATH`)
-
-## Next recommended step
-
-When you want, I can add a minimal local HTTP API (`/v1/todos`, `/v1/reminders`) on top of this backbone so your future pi extension and Telegram bot both use the same interface.
+- `src/protocol/openapi.yaml` (spec for a future public API)
+- Current dashboard already exposes internal `/api/*` endpoints for UI operations

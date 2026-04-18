@@ -2,8 +2,11 @@ import "dotenv/config";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { DateTime } from "luxon";
 import TelegramBot, { type Message } from "node-telegram-bot-api";
 import { withDefaultTimezone } from "../config.js";
 import { createBackbone } from "../index.js";
@@ -34,6 +37,9 @@ const TELEGRAM_REMINDER_CHAT_ID = process.env.TELEGRAM_REMINDER_CHAT_ID;
 const REMINDER_DISPATCH_STALE_SECONDS = Number.parseInt(process.env.REMINDER_DISPATCH_STALE_SECONDS ?? "120", 10) || 120;
 const REMINDER_SEND_MAX_RETRIES = Number.parseInt(process.env.REMINDER_SEND_MAX_RETRIES ?? "3", 10) || 3;
 const REMINDER_SEND_RETRY_BASE_MS = Number.parseInt(process.env.REMINDER_SEND_RETRY_BASE_MS ?? "1000", 10) || 1000;
+
+const AUTO_PI_SCHEDULES_FILE = path.resolve(process.cwd(), ".pi", "auto-pi-schedules.json");
+const AUTO_PI_DEFAULT_TIMEZONE = withDefaultTimezone(process.env.DEFAULT_TIMEZONE);
 
 type RpcResponse = {
   id?: string;
@@ -195,16 +201,166 @@ let reminderPollingInFlight = false;
 let reminderChatWarningShown = false;
 
 let queue: Promise<void> = Promise.resolve();
+let autoPiScheduleInterval: NodeJS.Timeout | null = null;
 
-function parseChatId(value?: string): number | null {
-  if (!value) return null;
-  const parsed = Number.parseInt(value, 10);
+type AutoPiSchedule = {
+  id: string;
+  timeHHMM: string;
+  prompt: string;
+  timezone: string;
+  chatId: number | null;
+};
+
+type AutoPiSchedulesConfig = {
+  enabled: boolean;
+  pollSeconds: number;
+  defaultChatId: number | null;
+  defaultTimezone: string;
+  schedules: AutoPiSchedule[];
+  source: string;
+};
+
+function parseChatId(value?: string | number | null): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value), 10);
   return Number.isNaN(parsed) ? null : parsed;
 }
 
 function getReminderChatId(): number | null {
   return parseChatId(TELEGRAM_REMINDER_CHAT_ID) ?? parseChatId(ALLOWED_CHAT_ID);
 }
+
+function normalizeTimeHHMM(input: string): string | null {
+  const trimmed = input.trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+  const hour = Number.parseInt(match[1], 10);
+  const minute = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parseScheduleList(raw: unknown, defaults: { timezone: string; chatId: number | null }): AutoPiSchedule[] {
+  if (!Array.isArray(raw)) return [];
+
+  const schedules: AutoPiSchedule[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    const id = typeof obj.id === "string" && obj.id.trim() ? obj.id.trim() : `schedule-${schedules.length + 1}`;
+    const timeHHMM = typeof obj.time === "string" ? normalizeTimeHHMM(obj.time) : null;
+    const prompt = typeof obj.prompt === "string" ? obj.prompt.trim() : "";
+    const timezone = withDefaultTimezone(typeof obj.timezone === "string" ? obj.timezone : defaults.timezone);
+    const chatId = parseChatId(
+      typeof obj.chatId === "string" || typeof obj.chatId === "number" ? (obj.chatId as string | number) : null,
+    );
+
+    if (!timeHHMM || !prompt) continue;
+    schedules.push({ id, timeHHMM, prompt, timezone, chatId: chatId ?? defaults.chatId });
+  }
+
+  const seen = new Set<string>();
+  return schedules.filter((schedule) => {
+    if (seen.has(schedule.id)) return false;
+    seen.add(schedule.id);
+    return true;
+  });
+}
+
+function loadAutoPiSchedulesConfig(): AutoPiSchedulesConfig {
+  const defaults = {
+    timezone: AUTO_PI_DEFAULT_TIMEZONE,
+    chatId: getReminderChatId(),
+    pollSeconds: 30,
+  };
+
+  if (!existsSync(AUTO_PI_SCHEDULES_FILE)) {
+    return {
+      enabled: false,
+      pollSeconds: defaults.pollSeconds,
+      defaultChatId: defaults.chatId,
+      defaultTimezone: defaults.timezone,
+      schedules: [],
+      source: AUTO_PI_SCHEDULES_FILE,
+    };
+  }
+
+  try {
+    const rawText = readFileSync(AUTO_PI_SCHEDULES_FILE, "utf8").trim();
+    if (!rawText) {
+      return {
+        enabled: false,
+        pollSeconds: defaults.pollSeconds,
+        defaultChatId: defaults.chatId,
+        defaultTimezone: defaults.timezone,
+        schedules: [],
+        source: AUTO_PI_SCHEDULES_FILE,
+      };
+    }
+
+    const parsed = JSON.parse(rawText) as unknown;
+
+    if (Array.isArray(parsed)) {
+      const schedules = parseScheduleList(parsed, { timezone: defaults.timezone, chatId: defaults.chatId });
+      return {
+        enabled: schedules.length > 0,
+        pollSeconds: defaults.pollSeconds,
+        defaultChatId: defaults.chatId,
+        defaultTimezone: defaults.timezone,
+        schedules,
+        source: AUTO_PI_SCHEDULES_FILE,
+      };
+    }
+
+    if (parsed && typeof parsed === "object") {
+      const cfg = parsed as Record<string, unknown>;
+      const enabled = cfg.enabled === undefined ? true : cfg.enabled === true;
+      const pollSeconds =
+        typeof cfg.pollSeconds === "number" && Number.isFinite(cfg.pollSeconds) && cfg.pollSeconds >= 5
+          ? Math.floor(cfg.pollSeconds)
+          : defaults.pollSeconds;
+      const defaultTimezone = withDefaultTimezone(
+        typeof cfg.defaultTimezone === "string" ? cfg.defaultTimezone : defaults.timezone,
+      );
+      const defaultChatId = parseChatId(
+        typeof cfg.defaultChatId === "string" || typeof cfg.defaultChatId === "number"
+          ? (cfg.defaultChatId as string | number)
+          : defaults.chatId,
+      );
+      const schedules = parseScheduleList(cfg.schedules, { timezone: defaultTimezone, chatId: defaultChatId });
+
+      return {
+        enabled: enabled && schedules.length > 0,
+        pollSeconds,
+        defaultChatId,
+        defaultTimezone,
+        schedules,
+        source: AUTO_PI_SCHEDULES_FILE,
+      };
+    }
+
+    console.warn(`[auto-pi-schedule] Invalid JSON format in ${AUTO_PI_SCHEDULES_FILE}. Expected object or array.`);
+  } catch (error) {
+    console.warn(
+      `[auto-pi-schedule] Failed to load ${AUTO_PI_SCHEDULES_FILE}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  return {
+    enabled: false,
+    pollSeconds: defaults.pollSeconds,
+    defaultChatId: defaults.chatId,
+    defaultTimezone: defaults.timezone,
+    schedules: [],
+    source: AUTO_PI_SCHEDULES_FILE,
+  };
+}
+
+const autoPiScheduleConfig = loadAutoPiSchedulesConfig();
+const autoPiSchedules = autoPiScheduleConfig.schedules;
+const autoPiLastRunBySchedule = new Map<string, string>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -348,6 +504,50 @@ async function sendTelegramText(chatId: number, text: string): Promise<void> {
   }
 }
 
+function enqueueAgentPrompt(chatId: number, prompt: string, originLabel?: string): void {
+  queue = queue
+    .then(async () => {
+      const reply = await rpc.runPrompt(prompt);
+      const header = originLabel ? `🗓️ ${originLabel}\n\n` : "";
+      await sendTelegramText(chatId, `${header}${reply}`);
+    })
+    .catch(async (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[auto-pi-schedule] ${message}`);
+      await sendTelegramText(chatId, `Scheduled prompt failed: ${message}`);
+    });
+}
+
+function runAutoPiSchedulesTick(): void {
+  if (!autoPiScheduleConfig.enabled) return;
+  if (autoPiSchedules.length === 0) return;
+
+  const fallbackChatId = autoPiScheduleConfig.defaultChatId ?? getReminderChatId();
+
+  for (const schedule of autoPiSchedules) {
+    const nowInZone = DateTime.utc().setZone(schedule.timezone);
+    if (!nowInZone.isValid) continue;
+
+    const currentHHMM = nowInZone.toFormat("HH:mm");
+    if (currentHHMM !== schedule.timeHHMM) continue;
+
+    const todayKey = nowInZone.toISODate() ?? nowInZone.toFormat("yyyy-MM-dd");
+    const lastRunKey = autoPiLastRunBySchedule.get(schedule.id);
+    if (lastRunKey === todayKey) continue;
+
+    const chatId = schedule.chatId ?? fallbackChatId;
+    if (chatId === null) {
+      console.warn(
+        `[auto-pi-schedule] schedule=${schedule.id} skipped: no chat id configured (set defaultChatId in ${autoPiScheduleConfig.source} or TELEGRAM_REMINDER_CHAT_ID).`,
+      );
+      continue;
+    }
+
+    autoPiLastRunBySchedule.set(schedule.id, todayKey);
+    enqueueAgentPrompt(chatId, schedule.prompt, `Scheduled (${schedule.id} @ ${schedule.timeHHMM} ${schedule.timezone})`);
+  }
+}
+
 async function handleMessage(msg: Message): Promise<void> {
   if (!msg.text) return;
   if (denyUnauthorized(msg)) return;
@@ -456,6 +656,11 @@ async function shutdown() {
       reminderInterval = null;
     }
 
+    if (autoPiScheduleInterval) {
+      clearInterval(autoPiScheduleInterval);
+      autoPiScheduleInterval = null;
+    }
+
     if (TELEGRAM_MODE === "webhook") {
       try {
         await bot.deleteWebHook();
@@ -503,5 +708,25 @@ process.on("SIGTERM", async () => {
     );
   } else {
     console.log("Reminder dispatcher disabled (REMINDER_NOTIFICATIONS_ENABLED=false).");
+  }
+
+  if (autoPiScheduleConfig.enabled) {
+    runAutoPiSchedulesTick();
+    autoPiScheduleInterval = setInterval(() => {
+      runAutoPiSchedulesTick();
+    }, autoPiScheduleConfig.pollSeconds * 1000);
+
+    console.log(
+      `Auto PI schedules active (poll every ${autoPiScheduleConfig.pollSeconds}s, schedules=${autoPiSchedules.length}, defaultTimezone=${autoPiScheduleConfig.defaultTimezone}, source=${autoPiScheduleConfig.source}).`,
+    );
+    if (autoPiSchedules.length > 0) {
+      console.log(
+        `[auto-pi-schedules] ${autoPiSchedules
+          .map((s) => `${s.id}@${s.timeHHMM}(${s.timezone})`)
+          .join(", ")}`,
+      );
+    }
+  } else {
+    console.log(`Auto PI schedules disabled (configure ${autoPiScheduleConfig.source}).`);
   }
 })();

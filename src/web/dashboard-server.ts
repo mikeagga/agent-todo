@@ -138,6 +138,28 @@ function dashboardHtml(): string {
     const statusEl = document.getElementById('status');
     const todoRowsEl = document.getElementById('todoRows');
     const reminderRowsEl = document.getElementById('reminderRows');
+    const tokenInputEl = document.getElementById('token');
+
+    (function bootstrapTokenFromQuery() {
+      const params = new URLSearchParams(window.location.search);
+      const tokenFromQuery = (params.get('token') || '').trim();
+      const tokenFromStorage = (window.localStorage.getItem('dashboardBearerToken') || '').trim();
+
+      if (tokenFromQuery) {
+        tokenInputEl.value = tokenFromQuery;
+        window.localStorage.setItem('dashboardBearerToken', tokenFromQuery);
+
+        params.delete('token');
+        const nextQuery = params.toString();
+        const nextUrl = window.location.pathname + (nextQuery ? ('?' + nextQuery) : '') + window.location.hash;
+        window.history.replaceState(null, '', nextUrl);
+        return;
+      }
+
+      if (tokenFromStorage) {
+        tokenInputEl.value = tokenFromStorage;
+      }
+    })();
 
     function setStatus(msg, isError = false) {
       statusEl.textContent = msg;
@@ -145,7 +167,12 @@ function dashboardHtml(): string {
     }
 
     function tokenHeader() {
-      const token = document.getElementById('token').value.trim();
+      const token = tokenInputEl.value.trim();
+      if (token) {
+        window.localStorage.setItem('dashboardBearerToken', token);
+      } else {
+        window.localStorage.removeItem('dashboardBearerToken');
+      }
       return token ? { Authorization: 'Bearer ' + token } : {};
     }
 
