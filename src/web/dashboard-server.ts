@@ -341,12 +341,12 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    if (!isAuthorized(req)) {
-      return unauthorized(res);
-    }
-
     if (req.method === "GET" && url.pathname === "/") {
       return sendHtml(res, dashboardHtml());
+    }
+
+    if (!isAuthorized(req)) {
+      return unauthorized(res);
     }
 
     if (req.method === "GET" && url.pathname === "/api/todos") {
