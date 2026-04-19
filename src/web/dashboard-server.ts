@@ -93,11 +93,43 @@ function dashboardHtml(): string {
     h1 {
       font-size: 28px;
       margin-bottom: 5px;
-      color: #ff0099;
       text-align: center;
-      background: #ffff99;
+      background: #000;
       border: 3px double #ff0099;
-      padding: 10px;
+      padding: 15px;
+      overflow: hidden;
+    }
+    .flame-text {
+      font-weight: bold;
+      background: linear-gradient(180deg, #fff000 0%, #ff8800 30%, #ff0000 60%, #8b0000 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: flames 2s ease-in-out infinite alternate;
+      text-shadow: 0 0 20px rgba(255, 136, 0, 0.8);
+      display: inline-block;
+    }
+    @keyframes flames {
+      0% {
+        background: linear-gradient(180deg, #fff000 0%, #ff8800 30%, #ff0000 60%, #8b0000 100%);
+        filter: brightness(1) hue-rotate(0deg);
+      }
+      25% {
+        background: linear-gradient(180deg, #ffff00 0%, #ff6600 30%, #ff2200 60%, #aa0000 100%);
+        filter: brightness(1.2) hue-rotate(5deg);
+      }
+      50% {
+        background: linear-gradient(180deg, #fff200 0%, #ff9900 30%, #ff1100 60%, #990000 100%);
+        filter: brightness(0.9) hue-rotate(-5deg);
+      }
+      75% {
+        background: linear-gradient(180deg, #ffee00 0%, #ff7700 30%, #ff3300 60%, #bb0000 100%);
+        filter: brightness(1.1) hue-rotate(3deg);
+      }
+      100% {
+        background: linear-gradient(180deg, #fff000 0%, #ff8800 30%, #ff0000 60%, #8b0000 100%);
+        filter: brightness(1) hue-rotate(0deg);
+      }
     }
     h2 {
       font-size: 18px;
@@ -278,6 +310,87 @@ function dashboardHtml(): string {
       display: inline-block;
       margin: 10px 0;
     }
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+      body {
+        padding: 5px;
+      }
+      .container {
+        padding: 10px;
+        border-width: 3px;
+      }
+      h1 {
+        font-size: 20px;
+        padding: 10px;
+      }
+      h2 {
+        font-size: 16px;
+        padding: 6px;
+      }
+      marquee {
+        font-size: 11px;
+        padding: 5px;
+      }
+      .ascii-banner {
+        font-size: 8px;
+        padding: 10px;
+        overflow-x: auto;
+      }
+      .row {
+        flex-wrap: wrap;
+      }
+      .field {
+        min-width: 100%;
+        margin-bottom: 8px;
+      }
+      .field.auto {
+        min-width: 100%;
+      }
+      input, select, button {
+        width: 100%;
+        font-size: 14px;
+        padding: 8px;
+      }
+      button {
+        margin-top: 5px;
+      }
+      table {
+        font-size: 10px;
+      }
+      th, td {
+        padding: 4px 3px;
+        font-size: 10px;
+      }
+      .table-scroll {
+        padding: 5px;
+      }
+      .counter {
+        font-size: 11px;
+      }
+      .footer {
+        font-size: 10px;
+        padding: 10px;
+      }
+      .status-bar {
+        font-size: 11px;
+        padding: 8px;
+      }
+    }
+    @media (max-width: 480px) {
+      h1 {
+        font-size: 18px;
+      }
+      .ascii-banner {
+        font-size: 6px;
+      }
+      td.row {
+        flex-direction: column;
+      }
+      button.small {
+        width: 100%;
+        margin-bottom: 3px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -290,7 +403,7 @@ function dashboardHtml(): string {
   |_| \\___/|____/ \\___/  |____/_/   \\_\\____/|_| |_|____/ \\___/_/   \\_\\_| \\_\\____/ 
     </div>
     <marquee>Welcome to my Todo Dashboard! * This site best viewed in Netscape Navigator * Last updated: 2026-04-18</marquee>
-    <h1>*** Agent Todo Dashboard ***</h1>
+    <h1><span class="flame-text">*** TODO DASHBOARD ***</span></h1>
     <center><div class="counter">VISITOR #001337</div></center>
 
     <table width="100%" border="0" cellpadding="5" bgcolor="#ffff99">
@@ -304,16 +417,27 @@ function dashboardHtml(): string {
       </tr>
     </table>
 
-    <div class="row">
-      <div class="field auto">
-        <label>User ID</label>
-        <input id="userId" type="text" value="demo-user" />
-      </div>
-      <div class="field auto" style="justify-content: flex-end;">
-        <label>&nbsp;</label>
-        <button id="reload">Reload All</button>
-      </div>
-    </div>
+    <table width="100%" border="2" cellpadding="8" bgcolor="#ffffcc" style="margin-bottom: 15px;">
+      <tr>
+        <td>
+          <b>*** LOGIN CREDENTIALS ***</b><br>
+          <div class="row" style="margin-top: 8px;">
+            <div class="field auto">
+              <label>Dashboard Token</label>
+              <input id="dashboardToken" type="password" placeholder="Enter token (if required)" style="min-width: 200px;" />
+            </div>
+            <div class="field auto">
+              <label>User ID</label>
+              <input id="userId" type="text" value="demo-user" />
+            </div>
+            <div class="field auto" style="justify-content: flex-end;">
+              <label>&nbsp;</label>
+              <button id="reload">Reload All</button>
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
 
     <h2>>>> MY TODOS <<<</h2>
     <div class="row">
@@ -415,8 +539,10 @@ function dashboardHtml(): string {
   const statusEl = document.getElementById('statusText');
   const statusDotEl = document.querySelector('.status-dot');
   const userIdInput = document.getElementById('userId');
+  const tokenInput = document.getElementById('dashboardToken');
 
   function userId() { return userIdInput.value || 'demo-user'; }
+  function getToken() { return tokenInput.value.trim(); }
 
   function setStatus(msg, isError = false) {
     statusEl.textContent = '*** ' + msg + ' ***';
@@ -427,6 +553,8 @@ function dashboardHtml(): string {
   async function api(path, options = {}) {
     const headers = { ...options.headers };
     if (options.body) headers['Content-Type'] = 'application/json';
+    const token = getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
     const res = await fetch(path, { ...options, headers });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
