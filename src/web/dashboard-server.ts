@@ -398,12 +398,11 @@ function dashboardHtml(): string {
 <body>
   <div class="container">
     <div class="ascii-banner">
-		                  .d8b.   d888b  d88888b d8b   db d888888b                  d888888b  .d88b.  d8888b.  .d88b.                       
-8. A .8 8. A .8      d8' `8b 88' Y8b 88'     888o  88 `~~88~~'                  `~~88~~' .8P  Y8. 88  `8D .8P  Y8.      8. A .8 8. A .8 
-`8.8.8' `8.8.8'      88ooo88 88      88ooooo 88V8o 88    88                        88    88    88 88   88 88    88      `8.8.8' `8.8.8' 
-  888     888        88~~~88 88  ooo 88~~~~~ 88 V8o88    88         C8888D         88    88    88 88   88 88    88        888     888   
-.d'8`b. .d'8`b.      88   88 88. ~8~ 88.     88  V888    88                        88    `8b  d8' 88  .8D `8b  d8'      .d'8`b. .d'8`b. 
-8' V `8 8' V `8      YP   YP  Y888P  Y88888P VP   V8P    YP                        YP     `Y88P'  Y8888D'  `Y88P'       8' V `8 8' V `8 
+ _____ ___  ____   ___    ____    _    ____  _   _ ____   ___    _    ____  ____  
+|_   _/ _ \\|  _ \\ / _ \\  |  _ \\  / \\  / ___|| | | | __ ) / _ \\  / \\  |  _ \\|  _ \\ 
+  | || | | | | | | | | | | | | |/ _ \\ \\___ \\| |_| |  _ \\| | | |/ _ \\ | |_) | | | |
+  | || |_| | |_| | |_| | | |_| / ___ \\ ___) |  _  | |_) | |_| / ___ \\|  _ <| |_| |
+  |_| \\___/|____/ \\___/  |____/_/   \\_\\____/|_| |_|____/ \\___/_/   \\_\\_| \\_\\____/ 
     </div>
     <marquee>Welcome to my Todo Dashboard! * This site best viewed in Netscape Navigator * Last updated: 2026-04-18</marquee>
     <h1><img src="/cooltext.gif" alt="TODO DASHBOARD" style="max-width: 100%; height: auto;"></h1>
