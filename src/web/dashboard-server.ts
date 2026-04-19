@@ -60,174 +60,159 @@ function dashboardHtml(): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>☆彡 Agent Todo Dashboard 彡☆</title>
+  <title>*** Agent Todo Dashboard ***</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: 'Comic Sans MS', 'Marker Felt', 'Trebuchet MS', cursive, sans-serif;
       background: #ffb3d9 url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect fill="%23ffcce6" width="50" height="50"/><rect fill="%23ffe6f2" x="50" width="50" height="50"/><rect fill="%23ffe6f2" y="50" width="50" height="50"/><rect fill="%23ffcce6" x="50" y="50" width="50" height="50"/></svg>');
-      color: #4a0066;
-      padding: 20px;
+      color: #000080;
+      padding: 10px;
       min-height: 100vh;
     }
     .ascii-banner {
-      background: linear-gradient(45deg, #ff6bda, #6bc0ff);
-      color: white;
-      padding: 20px;
-      border: 4px dashed #ff1493;
-      border-radius: 15px;
-      margin-bottom: 20px;
-      box-shadow: 0 8px 16px rgba(255, 20, 147, 0.3);
+      background: #ff66cc;
+      color: yellow;
+      padding: 15px;
+      border: 5px ridge #ff1493;
+      margin-bottom: 15px;
       text-align: center;
       font-family: monospace;
       white-space: pre;
       line-height: 1.2;
       font-size: 11px;
-      text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+    marquee {
+      background: #ffff00;
+      border: 3px solid #ff0000;
+      padding: 8px;
+      margin-bottom: 10px;
+      font-weight: bold;
+      color: #ff0000;
     }
     h1 {
-      font-size: 32px;
-      margin-bottom: 8px;
-      color: #ff1493;
-      text-shadow: 3px 3px 0 #ffb3d9, 6px 6px 0 #ffd9ec;
+      font-size: 28px;
+      margin-bottom: 5px;
+      color: #ff0099;
       text-align: center;
-      animation: rainbow 3s ease-in-out infinite;
-    }
-    @keyframes rainbow {
-      0%, 100% { color: #ff1493; }
-      25% { color: #ff6bda; }
-      50% { color: #6bc0ff; }
-      75% { color: #9d6bff; }
+      background: #ffff99;
+      border: 3px double #ff0099;
+      padding: 10px;
     }
     h2 {
-      font-size: 20px;
-      margin: 20px 0 12px 0;
-      color: #ff1493;
-      border-bottom: 3px dotted #ffb3d9;
-      padding-bottom: 6px;
-      background: linear-gradient(90deg, #ffe6f2, transparent);
-      padding: 10px;
-      border-radius: 8px 8px 0 0;
+      font-size: 18px;
+      margin: 15px 0 8px 0;
+      color: #0000ff;
+      background: #ccffff;
+      border: 2px solid #0000ff;
+      padding: 8px;
+      text-decoration: underline;
     }
     .container {
       max-width: 1400px;
       margin: 0 auto;
-      background: rgba(255, 255, 255, 0.95);
-      border: 5px solid #ff6bda;
-      border-radius: 20px;
-      padding: 25px;
-      box-shadow: 0 10px 30px rgba(255, 20, 147, 0.4);
+      background: #ffffff;
+      border: 5px outset #ff6bda;
+      padding: 15px;
     }
     .row {
       display: flex;
-      gap: 12px;
-      margin-bottom: 16px;
+      gap: 8px;
+      margin-bottom: 10px;
       flex-wrap: nowrap;
     }
     .status-bar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 16px;
-      background: linear-gradient(135deg, #ffffcc 0%, #fff9b3 100%);
-      border: 3px solid #ffcc00;
-      border-radius: 15px;
-      font-size: 14px;
-      margin-bottom: 20px;
-      box-shadow: 0 4px 8px rgba(255, 204, 0, 0.3);
+      background: #ffff99;
+      border: 3px groove #ff9900;
+      padding: 10px;
+      margin-bottom: 15px;
       font-weight: bold;
+      font-size: 13px;
     }
     .status-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
+      width: 10px;
+      height: 10px;
       background: #00ff00;
-      box-shadow: 0 0 10px #00ff00;
+      display: inline-block;
+      border: 1px solid #000;
       animation: blink 1s ease-in-out infinite;
     }
-    .status-dot.error { background: #ff0066; box-shadow: 0 0 10px #ff0066; }
+    .status-dot.error { background: #ff0000; }
     @keyframes blink {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.3; }
     }
     .table-scroll {
       overflow-x: auto;
-      background: #ffffff;
-      border: 4px solid #6bc0ff;
-      border-radius: 12px;
-      padding: 12px;
-      margin-bottom: 20px;
-      box-shadow: inset 0 0 10px rgba(107, 192, 255, 0.2);
+      background: #e6f2ff;
+      border: 3px inset #0066cc;
+      padding: 8px;
+      margin-bottom: 15px;
     }
     table {
-      width: 100%\n      border-collapse: collapse;
-      font-size: 13px;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      border: 2px solid #000;
     }
     th, td {
-      padding: 10px 12px;
+      padding: 6px 8px;
       text-align: left;
-      border-bottom: 2px dotted #ffb3d9;
+      border: 1px solid #999;
     }
     th {
       font-weight: bold;
-      color: #ff1493;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      background: linear-gradient(180deg, #ffe6f2 0%, #ffcce6 100%);
-      border: 2px solid #ff6bda;
+      color: #ffffff;
+      font-size: 11px;
+      background: #0066cc;
+      text-align: center;
     }
-    tr:nth-child(even) { background: #fffef0; }
-    tr:hover { background: #fff9e6 !important; }
+    tr:nth-child(even) { background: #ffffcc; }
+    tr:nth-child(odd) { background: #ffffff; }
+    tr:hover { background: #ffccff !important; }
     input, select, button {
       font-family: inherit;
-      font-size: 13px;
-      padding: 8px 12px;
-      border-radius: 8px;
-      border: 2px solid #ff6bda;
+      font-size: 12px;
+      padding: 4px 8px;
+      border: 2px inset #999;
       background: #ffffff;
-      color: #4a0066;
+      color: #000;
     }
     input:focus, select:focus {
-      outline: none;
-      border-color: #6bc0ff;
-      box-shadow: 0 0 8px rgba(107, 192, 255, 0.5);
+      outline: 1px dotted #000;
+      background: #ffffcc;
     }
     button {
       cursor: pointer;
-      background: linear-gradient(135deg, #6bc0ff 0%, #9d6bff 100%);
-      border: 2px solid #4a9fff;
-      color: #fff;
+      background: #cccccc;
+      border: 2px outset #999;
+      color: #000;
       font-weight: bold;
-      transition: all 0.2s ease;
       white-space: nowrap;
-      box-shadow: 0 4px 6px rgba(107, 192, 255, 0.3);
+      padding: 5px 12px;
     }
     button:hover { 
-      background: linear-gradient(135deg, #9d6bff 0%, #ff6bda 100%);
-      transform: translateY(-2px);
-      box-shadow: 0 6px 12px rgba(255, 107, 218, 0.4);
+      background: #dddddd;
     }
-    button:active { transform: translateY(0); }
+    button:active { 
+      border-style: inset;
+    }
     button.danger { 
-      background: linear-gradient(135deg, #ff6b6b 0%, #ff1493 100%);
-      border-color: #ff1493;
+      background: #ff9999;
     }
     button.danger:hover { 
-      background: linear-gradient(135deg, #ff1493 0%, #ff0066 100%);
+      background: #ffbbbb;
     }
     button.small {
-      font-size: 11px;
-      padding: 6px 10px;
+      font-size: 10px;
+      padding: 3px 8px;
     }
     label {
       display: block;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: bold;
-      color: #ff1493;
-      margin-bottom: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
+      color: #000080;
+      margin-bottom: 3px;
     }
     .field {
       display: flex;
@@ -236,56 +221,62 @@ function dashboardHtml(): string {
     }
     .field.grow { flex: 1; }
     .field.auto { flex: 0 0 auto; }
-    .priority-urgent { color: #ff0066 !important; font-weight: bold; }
-    .priority-high { color: #ff6b00 !important; font-weight: bold; }
-    .priority-normal { color: #4a0066; }
-    .priority-low { color: #9d6bff; }
+    .priority-urgent { color: #ff0000 !important; font-weight: bold; }
+    .priority-high { color: #ff6600 !important; font-weight: bold; }
+    .priority-normal { color: #000080; }
+    .priority-low { color: #666666; }
     code {
-      background: #ffffcc;
-      padding: 3px 8px;
-      border-radius: 5px;
+      background: #f0f0f0;
+      padding: 2px 4px;
       font-size: 11px;
       font-family: 'Courier New', monospace;
-      border: 1px dashed #ffcc00;
+      border: 1px solid #ccc;
     }
     td.row {
       display: flex;
-      gap: 8px;
+      gap: 5px;
       align-items: flex-start;
       flex-wrap: nowrap;
     }
     td .field-label {
-      font-size: 11px;
+      font-size: 10px;
       font-weight: bold;
-      color: #ff1493;
-      min-width: 72px;
+      color: #000080;
+      min-width: 60px;
       flex-shrink: 0;
-      padding-top: 5px;
+      padding-top: 3px;
     }
     td input, td select { flex: 1; min-width: 0; }
     td .row {
       flex-wrap: wrap;
-      gap: 6px;
+      gap: 4px;
       margin-bottom: 0;
     }
     .footer {
       text-align: center;
-      margin-top: 30px;
-      padding: 20px;
-      background: linear-gradient(135deg, #ffe6f2 0%, #e6f2ff 100%);
-      border: 3px dotted #ff6bda;
-      border-radius: 15px;
-      font-size: 12px;
-      color: #4a0066;
+      margin-top: 20px;
+      padding: 15px;
+      background: #ffccff;
+      border: 3px double #ff00ff;
+      font-size: 11px;
+      color: #000080;
     }
     .footer a {
-      color: #6bc0ff;
-      text-decoration: none;
+      color: #0000ff;
+      text-decoration: underline;
       font-weight: bold;
     }
     .footer a:hover {
-      color: #ff1493;
-      text-decoration: underline wavy;
+      color: #ff0000;
+    }
+    .counter {
+      background: #000;
+      color: #00ff00;
+      padding: 5px 10px;
+      border: 2px ridge #666;
+      font-family: monospace;
+      display: inline-block;
+      margin: 10px 0;
     }
   </style>
 </head>
@@ -297,15 +288,21 @@ function dashboardHtml(): string {
   | || | | | | | | | | | | | | |/ _ \\ \\___ \\| |_| |  _ \\| | | |/ _ \\ | |_) | | | |
   | || |_| | |_| | |_| | | |_| / ___ \\ ___) |  _  | |_) | |_| / ___ \\|  _ <| |_| |
   |_| \\___/|____/ \\___/  |____/_/   \\_\\____/|_| |_|____/ \\___/_/   \\_\\_| \\_\\____/ 
-                                                                                    
-           ~ Your friendly neighborhood task manager ~
     </div>
-    <h1>☆ Agent Todo Dashboard ☆</h1>
+    <marquee>Welcome to my Todo Dashboard! * This site best viewed in Netscape Navigator * Last updated: 2026-04-18</marquee>
+    <h1>*** Agent Todo Dashboard ***</h1>
+    <center><div class="counter">VISITOR #001337</div></center>
 
-    <div id="status" class="status-bar">
-      <div class="status-dot"></div>
-      <span id="statusText">☆ Ready to manage your tasks! ☆</span>
-    </div>
+    <table width="100%" border="0" cellpadding="5" bgcolor="#ffff99">
+      <tr>
+        <td>
+          <div class="status-bar">
+            <span class="status-dot"></span>
+            <span id="statusText">*** System Status: READY ***</span>
+          </div>
+        </td>
+      </tr>
+    </table>
 
     <div class="row">
       <div class="field auto">
@@ -318,7 +315,7 @@ function dashboardHtml(): string {
       </div>
     </div>
 
-    <h2>✿ Your Todos ✿</h2>
+    <h2>>>> MY TODOS <<<</h2>
     <div class="row">
       <div class="field grow">
         <label>Title</label>
@@ -368,7 +365,7 @@ function dashboardHtml(): string {
       </table>
     </div>
 
-    <h2>✿ Your Reminders ✿</h2>
+    <h2>>>> MY REMINDERS <<<</h2>
     <div class="row">
       <div class="field grow">
         <label>Text</label>
@@ -405,9 +402,12 @@ function dashboardHtml(): string {
       </table>
     </div>
 
+    <hr size="5" color="#ff00ff">
     <div class="footer">
-      <p>☆ Made with love for organizing your life! ☆</p>
-      <p style="margin-top: 10px; font-size: 10px;">Powered by Agent Todo | <a href="https://github.com" target="_blank">Visit us!</a></p>
+      <p><b>*** Made with love for organizing your life! ***</b></p>
+      <p style="margin-top: 5px;"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="1" height="1" alt=""> Powered by Agent Todo <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="1" height="1" alt=""></p>
+      <p><a href="https://github.com" target="_blank">Visit us!</a> | <a href="#">Guestbook</a> | <a href="#">Web Rings</a></p>
+      <p style="font-size: 9px; margin-top: 10px;">This page is best viewed at 800x600 resolution</p>
     </div>
   </div>
 
@@ -419,8 +419,8 @@ function dashboardHtml(): string {
   function userId() { return userIdInput.value || 'demo-user'; }
 
   function setStatus(msg, isError = false) {
-    statusEl.textContent = msg;
-    statusEl.style.color = isError ? '#ff0066' : '#4a0066';
+    statusEl.textContent = '*** ' + msg + ' ***';
+    statusEl.style.color = isError ? '#ff0000' : '#000080';
     statusDotEl.className = 'status-dot' + (isError ? ' error' : '');
   }
 
@@ -486,7 +486,7 @@ function dashboardHtml(): string {
     try {
       setStatus('Loading...');
       await Promise.all([loadTodos(), loadReminders()]);
-      setStatus('☆ Ready to manage your tasks! ☆');
+      setStatus('System Status: READY');
     } catch (err) {
       setStatus(err.message || String(err), true);
     }
