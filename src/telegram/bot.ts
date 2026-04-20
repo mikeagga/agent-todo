@@ -191,6 +191,7 @@ const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 let rpc: PiRpcClient | null = null;
 let rpcIdleTimer: NodeJS.Timeout | null = null;
 let rpcLastActivityAt = Date.now();
+let rpcExpectedExit = false;
 const backbone = createBackbone({ filePath: process.env.DB_PATH });
 let reminderInterval: NodeJS.Timeout | null = null;
 let reminderPollingInFlight = false;
@@ -218,6 +219,7 @@ type AutoPiSchedulesConfig = {
 
 function ensureRpc(): PiRpcClient {
   if (!rpc) {
+    rpcExpectedExit = false;
     rpc = new PiRpcClient();
     rpc.on("stderr", (line) => {
       console.error(`[pi-rpc stderr] ${String(line)}`);
@@ -228,7 +230,13 @@ function ensureRpc(): PiRpcClient {
     });
 
     rpc.on("exit", (err) => {
-      console.error(`[pi-rpc exit] ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (rpcExpectedExit) {
+        console.log(`[pi-rpc exit expected] ${msg}`);
+      } else {
+        console.error(`[pi-rpc exit] ${msg}`);
+      }
+      rpcExpectedExit = false;
       rpc = null;
     });
 
@@ -248,6 +256,7 @@ function touchRpcActivity() {
     if (idleMs < thresholdMs || !rpc) return;
 
     console.log(`[pi-rpc] idle for ${Math.floor(idleMs / 1000)}s, shutting down instance`);
+    rpcExpectedExit = true;
     rpc.close();
     rpc = null;
   }, PI_RPC_IDLE_MINUTES * 60 * 1000 + 1000);
@@ -637,6 +646,7 @@ async function shutdown() {
       rpcIdleTimer = null;
     }
     if (rpc) {
+      rpcExpectedExit = true;
       rpc.close();
       rpc = null;
     }
