@@ -15,6 +15,7 @@ import {
   type SearchTodosInput,
 } from "../protocol/contracts.js";
 import { UserService } from "./user-service.js";
+import { nowIso } from "../time/protocol.js";
 
 interface TodoRow {
   id: number;
@@ -29,10 +30,6 @@ interface TodoRow {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
 }
 
 function cancelPendingRemindersForTodo(db: DB, todoId: number, now: string): number {

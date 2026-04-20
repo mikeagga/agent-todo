@@ -8,6 +8,7 @@ import type {
   UserSetting,
 } from "../models.js";
 import { UserService } from "./user-service.js";
+import { nowIso } from "../time/protocol.js";
 
 interface ConversationSessionRow {
   id: number;
@@ -54,10 +55,6 @@ interface UserMemoryRow {
   importance: number;
   created_at: string;
   updated_at: string;
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
 }
 
 function mapConversation(row: ConversationSessionRow): ConversationSession {

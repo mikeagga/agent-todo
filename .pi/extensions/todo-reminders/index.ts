@@ -1,19 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import * as chrono from "chrono-node";
-import { DateTime } from "luxon";
-import { withDefaultTimezone } from "../../../src/config.ts";
-import { createBackbone } from "../../../src/index.ts";
 
 function toText(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
-function isIsoDateTime(value: string): boolean {
-  if (!value || !value.includes("T")) return false;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms);
+function clarification(question: string, details?: Record<string, unknown>) {
+  return {
+    content: [{ type: "text" as const, text: question }],
+    details: { responseType: "clarification", needsClarification: true, question, ...details },
+  };
 }
 
 function isValidRecurrenceRule(rule: string): boolean {
@@ -63,19 +61,11 @@ function isValidRecurrenceRule(rule: string): boolean {
   return true;
 }
 
-function formatDisplayDateTime(iso: string, timezone?: string): string {
-  const zone = withDefaultTimezone(timezone);
-  const dt = DateTime.fromISO(iso, { zone: "utc" }).setZone(zone);
-  if (!dt.isValid) return iso;
-  return dt.toFormat("MMM d, yyyy h:mm a ZZZZ");
-}
-
-function clarification(question: string, details?: Record<string, unknown>) {
-  return {
-    content: [{ type: "text" as const, text: question }],
-    details: { responseType: "clarification", needsClarification: true, question, ...details },
-  };
-}
+const defaultUserExternalId = process.env.TODO_USER_ID ?? "local-user";
+const pendingActionTtlMinutes = Number.parseInt(process.env.PENDING_ACTION_TTL_MINUTES ?? "15", 10) || 15;
+const dashboardPort = process.env.DASHBOARD_PORT ?? process.env.PORT ?? "8787";
+const BACKBONE_API_BASE_URL = (process.env.BACKBONE_API_BASE_URL ?? `http://127.0.0.1:${dashboardPort}`).replace(/\/$/, "");
+const BACKBONE_API_TOKEN = process.env.BACKBONE_API_TOKEN ?? process.env.DASHBOARD_TOKEN;
 
 type TimeResolution = {
   ok: boolean;
@@ -96,136 +86,96 @@ type DayRange = {
   reason?: string;
 };
 
-function resolveDayRange(input: { day?: string; timezone?: string }): DayRange {
-  const zone = withDefaultTimezone(input.timezone);
-  const day = (input.day ?? DateTime.utc().setZone(zone).toFormat("yyyy-MM-dd")).trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    return { ok: false, reason: "day must be in YYYY-MM-DD format" };
+type PendingConfirmation = {
+  token: string;
+  action: string;
+  targetId: number;
+  status: "pending" | "confirmed" | "expired" | "executed";
+  expiresAt: string;
+};
+
+const pendingConfirmations = new Map<string, PendingConfirmation>();
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers ?? {});
+  headers.set("content-type", "application/json");
+  if (BACKBONE_API_TOKEN) {
+    headers.set("authorization", `Bearer ${BACKBONE_API_TOKEN}`);
   }
 
-  const localStart = DateTime.fromFormat(day, "yyyy-MM-dd", { zone }).startOf("day");
-  const localEnd = localStart.endOf("day");
-  if (!localStart.isValid || !localEnd.isValid) {
-    return { ok: false, reason: "Invalid day or timezone" };
+  const res = await fetch(`${BACKBONE_API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+  });
+
+  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok || payload.ok === false) {
+    const message = typeof payload.error === "string" ? payload.error : `Backbone API error (${res.status})`;
+    throw new Error(message);
   }
 
-  const fromUtcIso = localStart.toUTC().toISO();
-  const toUtcIso = localEnd.toUTC().toISO();
-  if (!fromUtcIso || !toUtcIso) {
-    return { ok: false, reason: "Could not resolve day range" };
-  }
-
-  return {
-    ok: true,
-    day,
-    timezoneUsed: zone,
-    fromUtcIso,
-    toUtcIso,
-  };
+  return payload as T;
 }
 
-function resolveTimeExpression(input: {
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function isIsoDateTime(value: string): boolean {
+  if (!value || !value.includes("T")) return false;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms);
+}
+
+function formatDisplayDateTime(iso: string, timezone?: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: timezone,
+      timeZoneName: "short",
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(date);
+  }
+}
+
+async function resolveTimeExpressionViaApi(input: {
   expression: string;
   timezone?: string;
   requireTime?: boolean;
   referenceIso?: string;
-}): TimeResolution {
-  const zone = withDefaultTimezone(input.timezone);
-  const reference = input.referenceIso ? new Date(input.referenceIso) : new Date();
-  if (Number.isNaN(reference.getTime())) {
-    return {
-      ok: false,
-      confidence: "low",
-      needsClarification: true,
-      reason: "Invalid reference time",
-    };
-  }
+}): Promise<TimeResolution> {
+  const resp = await apiRequest<{ ok: true; resolution: TimeResolution }>("/api/time/resolve-expression", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return resp.resolution;
+}
 
-  const results = chrono.parse(input.expression, reference, { forwardDate: true });
-  if (results.length === 0) {
-    return {
-      ok: false,
-      confidence: "low",
-      needsClarification: true,
-      reason: "Could not parse time expression",
-    };
-  }
-
-  const best = results[0];
-  const start = best.start;
-
-  const dt = DateTime.fromObject(
-    {
-      year: start.get("year"),
-      month: start.get("month"),
-      day: start.get("day"),
-      hour: start.get("hour"),
-      minute: start.get("minute"),
-      second: start.get("second"),
-      millisecond: start.get("millisecond"),
-    },
-    { zone },
-  );
-
-  if (!dt.isValid) {
-    return {
-      ok: false,
-      confidence: "low",
-      needsClarification: true,
-      reason: `Parsed date is invalid (${dt.invalidExplanation ?? "unknown reason"})`,
-    };
-  }
-
-  const hasCertainHour = start.isCertain("hour");
-  const requireTime = input.requireTime ?? true;
-  const multipleCandidates = results.length > 1;
-
-  const needsClarification = (requireTime && !hasCertainHour) || multipleCandidates;
-  const confidence: TimeResolution["confidence"] = needsClarification
-    ? "medium"
-    : hasCertainHour
-      ? "high"
-      : "medium";
-
-  return {
-    ok: true,
-    isoUtc: dt.toUTC().toISO() ?? undefined,
-    timezoneUsed: zone,
-    confidence,
-    needsClarification,
-    reason: needsClarification
-      ? multipleCandidates
-        ? "Expression matched multiple possible dates"
-        : "Time was not explicit"
-      : undefined,
-    parsedText: best.text,
-  };
+async function resolveDayRangeViaApi(input: { day?: string; timezone?: string }): Promise<DayRange> {
+  const resp = await apiRequest<{ ok: true; range: DayRange }>("/api/time/day-range", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return resp.range;
 }
 
 export default function todoRemindersExtension(pi: ExtensionAPI) {
-  let backbone: ReturnType<typeof createBackbone> | null = null;
-
-  const defaultUserExternalId = process.env.TODO_USER_ID ?? "local-user";
-
-  const getBackbone = () => {
-    if (!backbone) {
-      backbone = createBackbone({ filePath: process.env.DB_PATH });
-    }
-    return backbone;
-  };
-
-  const idleTimeoutMinutes = Number.parseInt(process.env.SESSION_IDLE_MINUTES ?? "60", 10) || 60;
-  const pendingActionTtlMinutes = Number.parseInt(process.env.PENDING_ACTION_TTL_MINUTES ?? "15", 10) || 15;
-
-  const ensureConversationSession = (userExternalId: string) => {
-    const services = getBackbone();
-    services.memoryService.expireStalePendingActions();
-    const session = services.memoryService.getOrStartConversationSession(userExternalId, {
-      idleTimeoutMinutes,
-    });
-    return services.memoryService.touchConversationSession(session.id);
-  };
-
   const requireConfirmation = async (args: {
     userExternalId: string;
     action: string;
@@ -233,15 +183,20 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     confirmed?: boolean;
     confirmationToken?: string;
   }) => {
-    const services = getBackbone();
-    const session = ensureConversationSession(args.userExternalId);
+    const now = nowIso();
+
+    for (const [token, pending] of pendingConfirmations) {
+      if (pending.status === "pending" && Date.parse(pending.expiresAt) < Date.parse(now)) {
+        pendingConfirmations.set(token, { ...pending, status: "expired" });
+      }
+    }
 
     if (args.confirmed) {
       if (!args.confirmationToken) {
         return { ok: true as const, confirmationToken: undefined };
       }
 
-      const pending = services.memoryService.getPendingActionByToken(args.confirmationToken);
+      const pending = pendingConfirmations.get(args.confirmationToken);
       if (!pending) {
         return {
           ok: false as const,
@@ -266,22 +221,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         };
       }
 
-      if (Date.parse(pending.expiresAt) < Date.now()) {
-        services.memoryService.updatePendingActionStatus(args.confirmationToken, "expired");
-        return {
-          ok: false as const,
-          result: clarification("That confirmation expired. Please confirm again.", {
-            responseType: "confirmation_required",
-            action: args.action,
-            targetId: args.targetId,
-            confirmationToken: args.confirmationToken,
-            status: "expired",
-          }),
-        };
-      }
-
-      const payloadTargetId = Number((pending.payload as { targetId?: unknown }).targetId);
-      if (pending.actionType !== args.action || payloadTargetId !== args.targetId) {
+      if (pending.action !== args.action || pending.targetId !== args.targetId) {
         return {
           ok: false as const,
           result: clarification("Confirmation does not match this action. Please confirm again.", {
@@ -293,17 +233,18 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         };
       }
 
-      services.memoryService.updatePendingActionStatus(args.confirmationToken, "confirmed");
-      services.memoryService.touchConversationSession(session.id);
+      pendingConfirmations.set(args.confirmationToken, { ...pending, status: "confirmed" });
       return { ok: true as const, confirmationToken: args.confirmationToken };
     }
 
-    const pending = services.memoryService.createPendingAction({
-      userExternalId: args.userExternalId,
-      actionType: args.action,
-      payload: { targetId: args.targetId },
-      conversationSessionId: session.id,
-      ttlMinutes: pendingActionTtlMinutes,
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + pendingActionTtlMinutes * 60 * 1000).toISOString();
+    pendingConfirmations.set(token, {
+      token,
+      action: args.action,
+      targetId: args.targetId,
+      status: "pending",
+      expiresAt,
     });
 
     return {
@@ -314,8 +255,8 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
           responseType: "confirmation_required",
           action: args.action,
           targetId: args.targetId,
-          confirmationToken: pending.token,
-          expiresAt: pending.expiresAt,
+          confirmationToken: token,
+          expiresAt,
         },
       ),
     };
@@ -323,23 +264,14 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
 
   const markConfirmedActionExecuted = (token?: string) => {
     if (!token) return;
-    try {
-      getBackbone().memoryService.updatePendingActionStatus(token, "executed");
-    } catch {
-      // ignore stale/missing token updates
-    }
+    const pending = pendingConfirmations.get(token);
+    if (!pending) return;
+    pendingConfirmations.set(token, { ...pending, status: "executed" });
   };
 
-  pi.on("input", async (_event, _ctx) => {
-    ensureConversationSession(defaultUserExternalId);
-    return { action: "continue" as const };
-  });
-
+  pi.on("input", async () => ({ action: "continue" as const }));
   pi.on("session_shutdown", async () => {
-    if (backbone) {
-      backbone.close();
-      backbone = null;
-    }
+    // no-op
   });
 
   pi.registerTool({
@@ -361,7 +293,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       ),
     }),
     async execute(_toolCallId, params) {
-      const resolved = resolveTimeExpression({
+      const resolved = await resolveTimeExpressionViaApi({
         expression: params.expression,
         timezone: params.timezone,
         requireTime: params.requireTime,
@@ -417,7 +349,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       }
 
       if (!dueAt && params.timeExpression) {
-        const resolved = resolveTimeExpression({
+        const resolved = await resolveTimeExpressionViaApi({
           expression: params.timeExpression,
           timezone: params.timezone,
           requireTime: true,
@@ -440,14 +372,18 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         dueAt = resolved.isoUtc;
       }
 
-      const created = getBackbone().todoService.addTodo({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        title: params.title,
-        notes: params.notes,
-        dueAt,
-        priority: params.priority,
-        source: params.source ?? "pi-agent",
+      const todoResp = await apiRequest<{ ok: true; todo: Record<string, unknown> }>("/api/todos", {
+        method: "POST",
+        body: JSON.stringify({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          title: params.title,
+          notes: params.notes,
+          dueAt,
+          priority: params.priority,
+          source: params.source ?? "pi-agent",
+        }),
       });
+      const created = todoResp.todo as { id: number; title: string } & Record<string, unknown>;
 
       return {
         content: [{ type: "text", text: `Added todo #${created.id}: ${created.title}` }],
@@ -502,7 +438,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       }
 
       if (!dueAt && params.timeExpression) {
-        const resolved = resolveTimeExpression({
+        const resolved = await resolveTimeExpressionViaApi({
           expression: params.timeExpression,
           timezone: params.timezone,
           requireTime: true,
@@ -540,16 +476,19 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         );
       }
 
-      const updated = getBackbone().todoService.updateTodo({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        todoId: params.todoId,
-        title: params.title,
-        notes: params.notes,
-        clearNotes: params.clearNotes,
-        priority: params.priority,
-        dueAt,
-        clearDueAt: params.clearDueAt,
+      const todoResp = await apiRequest<{ ok: true; todo: Record<string, unknown> }>(`/api/todos/${params.todoId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          title: params.title,
+          notes: params.notes,
+          clearNotes: params.clearNotes,
+          priority: params.priority,
+          dueAt,
+          clearDueAt: params.clearDueAt,
+        }),
       });
+      const updated = todoResp.todo as { id: number; title: string; dueAt?: string | null } & Record<string, unknown>;
 
       return {
         content: [
@@ -576,7 +515,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
     }),
     async execute(_toolCallId, params) {
-      const range = resolveDayRange({ day: params.day, timezone: params.timezone });
+      const range = await resolveDayRangeViaApi({ day: params.day, timezone: params.timezone });
       if (!range.ok) {
         return clarification(`Could not resolve day range. ${range.reason ?? "Unknown reason"}`, {
           field: "day",
@@ -585,14 +524,18 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         });
       }
 
-      const todos = getBackbone().todoService
-        .listTodos({
+      const todosResp = await apiRequest<{ ok: true; todos: Array<Record<string, unknown>> }>(
+        `/api/todos?${new URLSearchParams({
           userExternalId: params.userExternalId ?? defaultUserExternalId,
-          status: params.status,
-          dueBefore: range.toUtcIso,
-          limit: params.limit,
-        })
-        .filter((todo) => !!todo.dueAt && Date.parse(todo.dueAt) >= Date.parse(range.fromUtcIso!));
+          ...(params.status ? { status: params.status } : {}),
+          ...(range.toUtcIso ? { dueBefore: range.toUtcIso } : {}),
+          ...(params.limit ? { limit: String(params.limit) } : {}),
+        }).toString()}`,
+      );
+      const todos = todosResp.todos.filter((todo) => {
+        const dueAt = typeof todo.dueAt === "string" ? todo.dueAt : null;
+        return !!dueAt && Date.parse(dueAt) >= Date.parse(range.fromUtcIso!);
+      }) as Array<{ id: number; status: string; title: string; dueAt?: string | null }>;
 
       const lines = todos.length
         ? todos.map(
@@ -638,12 +581,15 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         });
       }
 
-      const todos = getBackbone().todoService.listTodos({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        status: params.status,
-        dueBefore: params.dueBefore,
-        limit: params.limit,
-      });
+      const todosResp = await apiRequest<{ ok: true; todos: Array<Record<string, unknown>> }>(
+        `/api/todos?${new URLSearchParams({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          ...(params.status ? { status: params.status } : {}),
+          ...(params.dueBefore ? { dueBefore: params.dueBefore } : {}),
+          ...(params.limit ? { limit: String(params.limit) } : {}),
+        }).toString()}`,
+      );
+      const todos = todosResp.todos as Array<{ id: number; status: string; title: string; dueAt?: string | null }>;
 
       const lines = todos.length
         ? todos.map(
@@ -682,15 +628,18 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       const includeCancelled = params.includeCancelled ?? false;
       const sort = params.sort ?? "recent";
 
-      const todos = getBackbone().todoService.searchTodos({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        query: params.query,
-        includeDone,
-        includeCancelled,
-        olderThanDays: params.olderThanDays,
-        limit: params.limit,
-        sort,
-      });
+      const todosResp = await apiRequest<{ ok: true; todos: Array<Record<string, unknown>> }>(
+        `/api/todos/search?${new URLSearchParams({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          ...(params.query ? { query: params.query } : {}),
+          includeDone: String(includeDone),
+          includeCancelled: String(includeCancelled),
+          ...(params.olderThanDays ? { olderThanDays: String(params.olderThanDays) } : {}),
+          ...(params.limit ? { limit: String(params.limit) } : {}),
+          sort,
+        }).toString()}`,
+      );
+      const todos = todosResp.todos as Array<{ id: number; status: string; title: string; dueAt?: string | null; updatedAt: string }>;
 
       const lines = todos.length
         ? todos.map(
@@ -740,10 +689,11 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       });
       if (!gate.ok) return gate.result;
 
-      const updated = getBackbone().todoService.completeTodo({
-        userExternalId,
-        todoId: params.todoId,
+      const todoResp = await apiRequest<{ ok: true; todo: Record<string, unknown> }>(`/api/todos/${params.todoId}/complete`, {
+        method: "POST",
+        body: JSON.stringify({ userExternalId }),
       });
+      const updated = todoResp.todo as { id: number; title: string };
       markConfirmedActionExecuted(gate.confirmationToken);
 
       return {
@@ -779,10 +729,11 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       });
       if (!gate.ok) return gate.result;
 
-      const updated = getBackbone().todoService.cancelTodo({
-        userExternalId,
-        todoId: params.todoId,
+      const todoResp = await apiRequest<{ ok: true; todo: Record<string, unknown> }>(`/api/todos/${params.todoId}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ userExternalId }),
       });
+      const updated = todoResp.todo as { id: number; title: string };
       markConfirmedActionExecuted(gate.confirmationToken);
 
       return {
@@ -824,7 +775,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       }
 
       if (!remindAt && params.timeExpression) {
-        const resolved = resolveTimeExpression({
+        const resolved = await resolveTimeExpressionViaApi({
           expression: params.timeExpression,
           timezone: params.timezone,
           requireTime: true,
@@ -860,15 +811,19 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         );
       }
 
-      const created = getBackbone().reminderService.addReminder({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        todoId: params.todoId,
-        text: params.text,
-        remindAt,
-        timezone: params.timezone,
-        recurrenceRule: params.recurrenceRule,
-        source: params.source ?? "pi-agent",
+      const reminderResp = await apiRequest<{ ok: true; reminder: Record<string, unknown> }>("/api/reminders", {
+        method: "POST",
+        body: JSON.stringify({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          todoId: params.todoId,
+          text: params.text,
+          remindAt,
+          timezone: params.timezone,
+          recurrenceRule: params.recurrenceRule,
+          source: params.source ?? "pi-agent",
+        }),
       });
+      const created = reminderResp.reminder as { id: number; text: string; todoId?: number | null };
 
       return {
         content: [
@@ -925,7 +880,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       }
 
       if (!remindAt && params.timeExpression) {
-        const resolved = resolveTimeExpression({
+        const resolved = await resolveTimeExpressionViaApi({
           expression: params.timeExpression,
           timezone: params.timezone,
           requireTime: true,
@@ -969,15 +924,21 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         );
       }
 
-      const updated = getBackbone().reminderService.updateReminder({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        reminderId: params.reminderId,
-        text: params.text,
-        remindAt,
-        timezone: params.timezone,
-        recurrenceRule: params.recurrenceRule,
-        clearRecurrenceRule: params.clearRecurrenceRule,
-      });
+      const reminderResp = await apiRequest<{ ok: true; reminder: Record<string, unknown> }>(
+        `/api/reminders/${params.reminderId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            userExternalId: params.userExternalId ?? defaultUserExternalId,
+            text: params.text,
+            remindAt,
+            timezone: params.timezone,
+            recurrenceRule: params.recurrenceRule,
+            clearRecurrenceRule: params.clearRecurrenceRule,
+          }),
+        },
+      );
+      const updated = reminderResp.reminder as { id: number; text: string; remindAt: string; timezone?: string };
 
       return {
         content: [
@@ -1013,7 +974,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params) {
       const userExternalId = params.userExternalId ?? defaultUserExternalId;
-      const todo = getBackbone().todoService.getTodoById(userExternalId, params.todoId);
+      const todoResp = await apiRequest<{ ok: true; todo: Record<string, unknown> | null }>(
+        `/api/todos/${params.todoId}?${new URLSearchParams({ userExternalId }).toString()}`,
+      );
+      const todo = todoResp.todo as { id: number; title: string; dueAt?: string | null } | null;
 
       if (!todo) {
         return clarification(`I couldn't find todo #${params.todoId}. Which todo should I link this reminder to?`, {
@@ -1051,14 +1015,18 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         return clarification("remindAt must be ISO date-time.", { responseType: "clarification", remindAt });
       }
 
-      const created = getBackbone().reminderService.addReminder({
-        userExternalId,
-        todoId: todo.id,
-        text: params.text ?? `Reminder: ${todo.title}`,
-        remindAt,
-        timezone: params.timezone,
-        source: params.source ?? "pi-agent",
+      const reminderResp = await apiRequest<{ ok: true; reminder: Record<string, unknown> }>("/api/reminders", {
+        method: "POST",
+        body: JSON.stringify({
+          userExternalId,
+          todoId: todo.id,
+          text: params.text ?? `Reminder: ${todo.title}`,
+          remindAt,
+          timezone: params.timezone,
+          source: params.source ?? "pi-agent",
+        }),
       });
+      const created = reminderResp.reminder as { id: number; remindAt: string; timezone?: string };
 
       return {
         content: [
@@ -1088,11 +1056,21 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         return clarification("asOf must be an ISO date-time.", { field: "asOf", received: asOf });
       }
 
-      const reminders = getBackbone().reminderService.listDueReminders({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        asOf,
-        limit: params.limit,
-      });
+      const remindersResp = await apiRequest<{ ok: true; reminders: Array<Record<string, unknown>> }>(
+        `/api/reminders/due?${new URLSearchParams({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          asOf,
+          ...(params.limit ? { limit: String(params.limit) } : {}),
+        }).toString()}`,
+      );
+      const reminders = remindersResp.reminders as Array<{
+        id: number;
+        status: string;
+        text: string;
+        remindAt: string;
+        timezone?: string;
+        todoId?: number | null;
+      }>;
 
       const lines = reminders.length
         ? reminders.map(
@@ -1122,7 +1100,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
     }),
     async execute(_toolCallId, params) {
-      const range = resolveDayRange({ day: params.day, timezone: params.timezone });
+      const range = await resolveDayRangeViaApi({ day: params.day, timezone: params.timezone });
       if (!range.ok) {
         return clarification(`Could not resolve day range. ${range.reason ?? "Unknown reason"}`, {
           field: "day",
@@ -1131,14 +1109,24 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         });
       }
 
-      const reminders = getBackbone().reminderService.listReminders({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        status: params.status,
-        todoId: params.todoId,
-        from: range.fromUtcIso,
-        to: range.toUtcIso,
-        limit: params.limit,
-      });
+      const remindersResp = await apiRequest<{ ok: true; reminders: Array<Record<string, unknown>> }>(
+        `/api/reminders?${new URLSearchParams({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          ...(params.status ? { status: params.status } : {}),
+          ...(params.todoId ? { todoId: String(params.todoId) } : {}),
+          ...(range.fromUtcIso ? { from: range.fromUtcIso } : {}),
+          ...(range.toUtcIso ? { to: range.toUtcIso } : {}),
+          ...(params.limit ? { limit: String(params.limit) } : {}),
+        }).toString()}`,
+      );
+      const reminders = remindersResp.reminders as Array<{
+        id: number;
+        status: string;
+        text: string;
+        remindAt: string;
+        timezone?: string;
+        todoId?: number | null;
+      }>;
 
       const lines = reminders.length
         ? reminders.map(
@@ -1182,14 +1170,24 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         return clarification("to must be an ISO date-time.", { field: "to", received: params.to });
       }
 
-      const reminders = getBackbone().reminderService.listReminders({
-        userExternalId: params.userExternalId ?? defaultUserExternalId,
-        status: params.status,
-        todoId: params.todoId,
-        from: params.from,
-        to: params.to,
-        limit: params.limit,
-      });
+      const remindersResp = await apiRequest<{ ok: true; reminders: Array<Record<string, unknown>> }>(
+        `/api/reminders?${new URLSearchParams({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          ...(params.status ? { status: params.status } : {}),
+          ...(params.todoId ? { todoId: String(params.todoId) } : {}),
+          ...(params.from ? { from: params.from } : {}),
+          ...(params.to ? { to: params.to } : {}),
+          ...(params.limit ? { limit: String(params.limit) } : {}),
+        }).toString()}`,
+      );
+      const reminders = remindersResp.reminders as Array<{
+        id: number;
+        status: string;
+        text: string;
+        remindAt: string;
+        timezone?: string;
+        todoId?: number | null;
+      }>;
 
       const lines = reminders.length
         ? reminders.map(
@@ -1238,10 +1236,14 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       });
       if (!gate.ok) return gate.result;
 
-      const updated = getBackbone().reminderService.cancelReminder({
-        userExternalId,
-        reminderId: params.reminderId,
-      });
+      const reminderResp = await apiRequest<{ ok: true; reminder: Record<string, unknown> }>(
+        `/api/reminders/${params.reminderId}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({ userExternalId }),
+        },
+      );
+      const updated = reminderResp.reminder as { id: number; text: string };
       markConfirmedActionExecuted(gate.confirmationToken);
 
       return {
@@ -1251,22 +1253,32 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("todo-api-capabilities", {
+    description: "Show backbone API capabilities",
+    handler: async (_args, ctx) => {
+      try {
+        const capabilities = await apiRequest<Record<string, unknown>>("/api/meta/capabilities");
+        ctx.ui.notify(`Capabilities: ${JSON.stringify(capabilities)}`, "info");
+      } catch (error) {
+        ctx.ui.notify(`capabilities error: ${toText(error instanceof Error ? error.message : error)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("todo-db-health", {
     description: "Check todo/reminder database availability",
     handler: async (_args, ctx) => {
       try {
-        const service = getBackbone();
-        const sample = service.todoService.listTodos({
-          userExternalId: defaultUserExternalId,
-          limit: 1,
-        });
+        const todosResp = await apiRequest<{ ok: true; todos: Array<Record<string, unknown>> }>(
+          `/api/todos?${new URLSearchParams({ userExternalId: defaultUserExternalId, limit: "1" }).toString()}`,
+        );
 
         ctx.ui.notify(
-          `todo-reminders DB OK (${service.dbPath}). Sample query returned ${sample.length} row(s).`,
+          `todo-reminders API OK (${BACKBONE_API_BASE_URL}). Sample query returned ${todosResp.todos.length} row(s).`,
           "info",
         );
       } catch (error) {
-        ctx.ui.notify(`todo-reminders DB error: ${toText(error instanceof Error ? error.message : error)}`, "error");
+        ctx.ui.notify(`todo-reminders API error: ${toText(error instanceof Error ? error.message : error)}`, "error");
       }
     },
   });

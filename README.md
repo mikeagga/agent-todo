@@ -5,7 +5,7 @@ Local-first todo/reminder backend with:
 - SQLite schema + migrations
 - strongly typed protocol contracts
 - service layer for todo/reminder/memory primitives
-- project-local pi extension (`.pi/extensions/todo-reminders`)
+- pi extension client (`.pi/extensions/todo-reminders`) that talks to backbone HTTP API
 - Telegram relay bot (`src/telegram/bot.ts`)
 - built-in web dashboard/API (`src/web/dashboard-server.ts`)
 
@@ -22,8 +22,10 @@ npm run demo
 Useful commands:
 
 ```bash
-npm run telegram:bot   # Telegram relay + reminder dispatcher + optional auto schedules
-npm run dashboard      # web dashboard + internal JSON API
+npm run telegram:bot    # Telegram relay + reminder dispatcher + optional auto schedules
+npm run dashboard       # web dashboard + internal JSON API
+npm run extension:sync  # pull/update extension from git source (optional)
+npm run start:all       # db:init + extension sync + bot + dashboard
 npm run typecheck
 ```
 
@@ -92,15 +94,8 @@ Set env vars in `.env` or your hosting platform.
 
 - `TELEGRAM_BOT_TOKEN` (**required**)
 - `TELEGRAM_ALLOWED_CHAT_ID` (recommended)
-- `TELEGRAM_MODE` (`polling` default, or `webhook`)
+- Polling mode is always enabled (webhook mode removed)
 - `TELEGRAM_REMINDER_CHAT_ID` (optional; falls back to allowed chat)
-
-Webhook mode only:
-
-- `TELEGRAM_WEBHOOK_URL`
-- `TELEGRAM_WEBHOOK_PATH` (default `/telegram/webhook`)
-- `TELEGRAM_WEBHOOK_SECRET` (recommended)
-- `TELEGRAM_WEBHOOK_HOST` / `TELEGRAM_WEBHOOK_PORT`
 
 ### PI relay process
 
@@ -108,6 +103,18 @@ Webhook mode only:
 - `PI_PROVIDER` / `PI_MODEL` (optional)
 - `PI_EXTRA_ARGS` (optional)
 - `PI_PROMPT_PREFIX` (optional; lightweight tone/style instruction prepended to every relayed prompt)
+
+### Backbone API client (extension)
+
+- `BACKBONE_API_BASE_URL` (default `http://127.0.0.1:${DASHBOARD_PORT|PORT|8787}`)
+- `BACKBONE_API_TOKEN` (defaults to `DASHBOARD_TOKEN`)
+
+### Runtime extension sync (optional)
+
+- `PI_EXTENSION_GIT_URL` (git URL for extension source)
+- `PI_EXTENSION_REF` (branch/tag/commit-ish, default `main`)
+- `PI_EXTENSION_TARGET_DIR` (default `.pi/extensions/todo-reminders`)
+- `PI_EXTENSION_SYNC_REQUIRED` (`true` to fail startup on sync error)
 
 ### Reminder dispatcher tuning
 
@@ -228,10 +235,12 @@ If `DASHBOARD_TOKEN` is set, paste it in the dashboard header token field.
 
 ## 8) Railway deployment
 
-Current Docker startup runs both in one container:
+Current Docker startup (`npm run start:all`) runs in one container:
 
-- `telegram:bot` (background)
-- `dashboard` (foreground web process)
+1. `db:init`
+2. `extension:sync` (optional git-backed extension update)
+3. `telegram:bot` (background)
+4. `dashboard` (foreground web process)
 
 Recommended Railway setup:
 
@@ -239,7 +248,7 @@ Recommended Railway setup:
 - Set `DB_PATH=/data/todo-reminders.db`
 - Set `DASHBOARD_HOST=0.0.0.0`
 - Set `DASHBOARD_TOKEN=<strong-random-token>`
-- Usually use `TELEGRAM_MODE=polling`
+- Telegram relay runs in polling mode
 
 ---
 
@@ -265,4 +274,8 @@ Note: database `user_memory` exists (via `MemoryService`) but there is no user-f
 ## 10) Future HTTP contract
 
 - `src/protocol/openapi.yaml` (spec for a future public API)
-- Current dashboard already exposes internal `/api/*` endpoints for UI operations
+- Current dashboard exposes `/api/*` endpoints used by both UI and extension client
+- Capability discovery endpoint: `GET /api/meta/capabilities`
+- Time protocol helper endpoints:
+  - `POST /api/time/resolve-expression`
+  - `POST /api/time/day-range`

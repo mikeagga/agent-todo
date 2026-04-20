@@ -15,6 +15,7 @@ import {
   type CancelReminderInput,
 } from "../protocol/contracts.js";
 import { UserService } from "./user-service.js";
+import { nowIso } from "../time/protocol.js";
 
 interface ReminderRow {
   id: number;
@@ -30,10 +31,6 @@ interface ReminderRow {
   created_at: string;
   updated_at: string;
   sent_at: string | null;
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
 }
 
 type RecurrenceFrequency = "MINUTELY" | "HOURLY" | "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";

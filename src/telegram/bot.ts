@@ -3,7 +3,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { DateTime } from "luxon";
@@ -23,13 +22,6 @@ const PI_PROVIDER = process.env.PI_PROVIDER;
 const PI_MODEL = process.env.PI_MODEL;
 const PI_EXTRA_ARGS = (process.env.PI_EXTRA_ARGS ?? "").trim();
 const PI_PROMPT_PREFIX = (process.env.PI_PROMPT_PREFIX ?? "").trim();
-
-const TELEGRAM_MODE = (process.env.TELEGRAM_MODE ?? "polling").toLowerCase();
-const TELEGRAM_WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL;
-const TELEGRAM_WEBHOOK_PATH = process.env.TELEGRAM_WEBHOOK_PATH ?? "/telegram/webhook";
-const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
-const TELEGRAM_WEBHOOK_HOST = process.env.TELEGRAM_WEBHOOK_HOST ?? "0.0.0.0";
-const TELEGRAM_WEBHOOK_PORT = Number.parseInt(process.env.TELEGRAM_WEBHOOK_PORT ?? "8788", 10) || 8788;
 
 const REMINDER_NOTIFICATIONS_ENABLED = (process.env.REMINDER_NOTIFICATIONS_ENABLED ?? "true").toLowerCase() !== "false";
 const REMINDER_POLL_SECONDS = Number.parseInt(process.env.REMINDER_POLL_SECONDS ?? "30", 10) || 30;
@@ -194,10 +186,9 @@ class PiRpcClient {
   }
 }
 
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: TELEGRAM_MODE === "polling" });
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 const rpc = new PiRpcClient();
 const backbone = createBackbone({ filePath: process.env.DB_PATH });
-let webhookServer: Server | null = null;
 let reminderInterval: NodeJS.Timeout | null = null;
 let reminderPollingInFlight = false;
 let reminderChatWarningShown = false;
@@ -565,66 +556,6 @@ async function handleMessage(msg: Message): Promise<void> {
   await sendTelegramText(chatId, reply);
 }
 
-async function setupWebhookMode(): Promise<void> {
-  if (!TELEGRAM_WEBHOOK_URL) {
-    throw new Error("TELEGRAM_WEBHOOK_URL is required when TELEGRAM_MODE=webhook");
-  }
-
-  await bot.setWebHook(TELEGRAM_WEBHOOK_URL, {
-    secret_token: TELEGRAM_WEBHOOK_SECRET,
-  } as any);
-
-  webhookServer = createServer((req, res) => {
-    if (req.method === "GET" && req.url === "/health") {
-      res.statusCode = 200;
-      res.setHeader("content-type", "text/plain");
-      res.end("ok");
-      return;
-    }
-
-    const urlPath = (req.url ?? "").split("?")[0];
-    if (req.method !== "POST" || urlPath !== TELEGRAM_WEBHOOK_PATH) {
-      res.statusCode = 404;
-      res.end("not found");
-      return;
-    }
-
-    if (TELEGRAM_WEBHOOK_SECRET) {
-      const header = req.headers["x-telegram-bot-api-secret-token"];
-      if (header !== TELEGRAM_WEBHOOK_SECRET) {
-        res.statusCode = 401;
-        res.end("unauthorized");
-        return;
-      }
-    }
-
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk.toString("utf8");
-    });
-
-    req.on("end", async () => {
-      try {
-        const update = JSON.parse(body);
-        bot.processUpdate(update);
-        res.statusCode = 200;
-        res.end("ok");
-      } catch (error) {
-        res.statusCode = 400;
-        res.end(`invalid update: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    webhookServer!.once("error", reject);
-    webhookServer!.listen(TELEGRAM_WEBHOOK_PORT, TELEGRAM_WEBHOOK_HOST, () => {
-      webhookServer!.off("error", reject);
-      resolve();
-    });
-  });
-}
-
 bot.on("message", (msg) => {
   queue = queue
     .then(() => handleMessage(msg))
@@ -659,16 +590,6 @@ async function shutdown() {
       autoPiScheduleInterval = null;
     }
 
-    if (TELEGRAM_MODE === "webhook") {
-      try {
-        await bot.deleteWebHook();
-      } catch {
-        // ignore cleanup errors
-      }
-      if (webhookServer) {
-        await new Promise<void>((resolve) => webhookServer!.close(() => resolve()));
-      }
-    }
   } finally {
     rpc.close();
     backbone.close();
@@ -686,14 +607,7 @@ process.on("SIGTERM", async () => {
 });
 
 (async () => {
-  if (TELEGRAM_MODE === "webhook") {
-    await setupWebhookMode();
-    console.log(
-      `Telegram bot started (relay mode, webhook). Listening on http://${TELEGRAM_WEBHOOK_HOST}:${TELEGRAM_WEBHOOK_PORT}${TELEGRAM_WEBHOOK_PATH}`,
-    );
-  } else {
-    console.log("Telegram bot started (relay mode, polling).");
-  }
+  console.log("Telegram bot started (relay mode, polling).");
 
   if (REMINDER_NOTIFICATIONS_ENABLED) {
     await pollAndPushDueReminders();

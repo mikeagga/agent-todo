@@ -4,11 +4,13 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { URL } from "node:url";
 import { createBackbone } from "../index.js";
+import { resolveDayRange, resolveTimeExpression } from "../time/protocol.js";
 
 const PORT = Number.parseInt(process.env.DASHBOARD_PORT ?? process.env.PORT ?? "8787", 10) || 8787;
 const HOST = process.env.DASHBOARD_HOST ?? "0.0.0.0";
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN?.trim();
 const DEFAULT_USER_EXTERNAL_ID = process.env.TODO_USER_ID ?? "local-user";
+const API_CAPABILITIES_VERSION = "2026-04-19";
 
 const backbone = createBackbone({ filePath: process.env.DB_PATH });
 
@@ -542,6 +544,46 @@ function dashboardHtml(): string {
   const statusDotEl = document.querySelector('.status-dot');
   const userIdInput = document.getElementById('userId');
   const tokenInput = document.getElementById('dashboardToken');
+  const params = new URLSearchParams(window.location.search);
+
+  const savedToken = localStorage.getItem('dashboardToken') || '';
+  const savedUserId = localStorage.getItem('dashboardUserId') || '';
+  const tokenFromUrl = params.get('token') || '';
+  const userFromUrl = params.get('userExternalId') || params.get('userId') || '';
+
+  if (tokenFromUrl || userFromUrl) {
+    params.delete('token');
+    params.delete('userExternalId');
+    params.delete('userId');
+    const next = params.toString();
+    history.replaceState(null, '', next ? ('?' + next) : window.location.pathname);
+  }
+
+  if (tokenFromUrl) {
+    tokenInput.value = tokenFromUrl;
+    localStorage.setItem('dashboardToken', tokenFromUrl);
+  } else if (savedToken) {
+    tokenInput.value = savedToken;
+  }
+
+  if (userFromUrl) {
+    userIdInput.value = userFromUrl;
+    localStorage.setItem('dashboardUserId', userFromUrl);
+  } else if (savedUserId) {
+    userIdInput.value = savedUserId;
+  }
+
+  tokenInput.addEventListener('change', () => {
+    const token = tokenInput.value.trim();
+    if (token) localStorage.setItem('dashboardToken', token);
+    else localStorage.removeItem('dashboardToken');
+  });
+
+  userIdInput.addEventListener('change', () => {
+    const uid = userIdInput.value.trim();
+    if (uid) localStorage.setItem('dashboardUserId', uid);
+    else localStorage.removeItem('dashboardUserId');
+  });
 
   function userId() { return userIdInput.value || 'demo-user'; }
   function getToken() { return tokenInput.value.trim(); }
@@ -560,6 +602,9 @@ function dashboardHtml(): string {
     const res = await fetch(path, { ...options, headers });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        throw new Error(data.error || 'Unauthorized: paste DASHBOARD_TOKEN in the token field.');
+      }
       throw new Error(data.error || ('HTTP ' + res.status));
     }
     return res.json();
@@ -569,7 +614,8 @@ function dashboardHtml(): string {
     const filter = document.getElementById('todoStatusFilter').value;
     const params = new URLSearchParams({ userExternalId: userId() });
     if (filter !== 'all') params.set('status', filter);
-    const todos = await api('/api/todos?' + params);
+    const todosRes = await api('/api/todos?' + params);
+    const todos = Array.isArray(todosRes?.todos) ? todosRes.todos : [];
     const tbody = document.getElementById('todoRows');
     tbody.innerHTML = '';
     for (const t of todos) {
@@ -593,7 +639,8 @@ function dashboardHtml(): string {
     const filter = document.getElementById('reminderStatusFilter').value;
     const params = new URLSearchParams({ userExternalId: userId() });
     if (filter !== 'all') params.set('status', filter);
-    const reminders = await api('/api/reminders?' + params);
+    const remindersRes = await api('/api/reminders?' + params);
+    const reminders = Array.isArray(remindersRes?.reminders) ? remindersRes.reminders : [];
     const tbody = document.getElementById('reminderRows');
     tbody.innerHTML = '';
     for (const r of reminders) {
@@ -720,28 +767,244 @@ const server = createServer(async (req, res) => {
       return unauthorized(res);
     }
 
+    if (req.method === "GET" && url.pathname === "/api/meta/capabilities") {
+      return sendJson(res, 200, {
+        ok: true,
+        capabilitiesVersion: API_CAPABILITIES_VERSION,
+        time: {
+          canonicalStorage: "utc-iso8601",
+          endpoints: ["/api/time/resolve-expression", "/api/time/day-range"],
+        },
+        endpoints: {
+          todos: [
+            "GET /api/todos",
+            "GET /api/todos/search",
+            "GET /api/todos/by-day",
+            "GET /api/todos/:id",
+            "POST /api/todos",
+            "PATCH /api/todos/:id",
+            "POST /api/todos/:id/complete",
+            "POST /api/todos/:id/cancel",
+          ],
+          reminders: [
+            "GET /api/reminders",
+            "GET /api/reminders/due",
+            "GET /api/reminders/by-day",
+            "POST /api/reminders",
+            "PATCH /api/reminders/:id",
+            "POST /api/reminders/:id/cancel",
+          ],
+        },
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/time/resolve-expression") {
+      const body = await readJsonBody(req);
+      const expression = normalizeOptionalString((body as { expression?: unknown }).expression);
+      const timezone = normalizeOptionalString((body as { timezone?: unknown }).timezone);
+      const requireTime = (body as { requireTime?: unknown }).requireTime === true;
+      const referenceIso = normalizeOptionalString((body as { referenceIso?: unknown }).referenceIso);
+
+      if (!expression) {
+        return sendJson(res, 400, { ok: false, error: "expression is required" });
+      }
+
+      const resolution = resolveTimeExpression({ expression, timezone, requireTime, referenceIso });
+      return sendJson(res, 200, { ok: true, resolution });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/time/day-range") {
+      const body = await readJsonBody(req);
+      const day = normalizeOptionalString((body as { day?: unknown }).day);
+      const timezone = normalizeOptionalString((body as { timezone?: unknown }).timezone);
+      const range = resolveDayRange({ day, timezone });
+      return sendJson(res, 200, { ok: true, range });
+    }
+
     if (req.method === "GET" && url.pathname === "/api/todos") {
       const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
       const status = url.searchParams.get("status") || undefined;
+      const dueBefore = normalizeOptionalString(url.searchParams.get("dueBefore"));
       const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
       const todos = backbone.todoService.listTodos({
         userExternalId,
         status: status === "all" ? undefined : (status as "open" | "done" | "cancelled" | undefined),
+        dueBefore,
         limit,
       });
       return sendJson(res, 200, { ok: true, todos });
     }
 
+    if (req.method === "GET" && url.pathname === "/api/todos/search") {
+      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const query = normalizeOptionalString(url.searchParams.get("query"));
+      const includeDone = (url.searchParams.get("includeDone") ?? "true").toLowerCase() !== "false";
+      const includeCancelled = (url.searchParams.get("includeCancelled") ?? "false").toLowerCase() === "true";
+      const olderThanDays = Number.parseInt(url.searchParams.get("olderThanDays") ?? "", 10);
+      const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
+      const sortRaw = url.searchParams.get("sort") ?? "recent";
+      const sort = (sortRaw === "oldest" || sortRaw === "due" ? sortRaw : "recent") as "recent" | "oldest" | "due";
+
+      const todos = backbone.todoService.searchTodos({
+        userExternalId,
+        query,
+        includeDone,
+        includeCancelled,
+        olderThanDays: Number.isFinite(olderThanDays) ? olderThanDays : undefined,
+        limit,
+        sort,
+      });
+      return sendJson(res, 200, { ok: true, todos });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/todos/by-day") {
+      const day = normalizeOptionalString(url.searchParams.get("day"));
+      const timezone = normalizeOptionalString(url.searchParams.get("timezone"));
+      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const status = url.searchParams.get("status") || undefined;
+      const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
+      const range = resolveDayRange({ day, timezone });
+      if (!range.ok || !range.fromUtcIso || !range.toUtcIso) {
+        return sendJson(res, 400, { ok: false, error: range.reason ?? "Invalid day range" });
+      }
+
+      const todos = backbone.todoService
+        .listTodos({
+          userExternalId,
+          status: status === "all" ? undefined : (status as "open" | "done" | "cancelled" | undefined),
+          dueBefore: range.toUtcIso,
+          limit,
+        })
+        .filter((todo) => !!todo.dueAt && Date.parse(todo.dueAt) >= Date.parse(range.fromUtcIso!));
+
+      return sendJson(res, 200, {
+        ok: true,
+        day: range.day,
+        timezone: range.timezoneUsed,
+        fromUtc: range.fromUtcIso,
+        toUtc: range.toUtcIso,
+        todos,
+      });
+    }
+
+    const todoGet = req.method === "GET" ? url.pathname.match(/^\/api\/todos\/(\d+)$/) : null;
+    if (todoGet) {
+      const todoId = Number(todoGet[1]);
+      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const todo = backbone.todoService.getTodoById(userExternalId, todoId);
+      return sendJson(res, 200, { ok: true, todo });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/todos") {
+      const body = await readJsonBody(req);
+      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
+        DEFAULT_USER_EXTERNAL_ID;
+      const todo = backbone.todoService.addTodo({
+        userExternalId,
+        title: normalizeOptionalString((body as { title?: unknown }).title) ?? "",
+        notes: typeof (body as { notes?: unknown }).notes === "string" ? (body as { notes: string }).notes : undefined,
+        dueAt: normalizeOptionalString((body as { dueAt?: unknown }).dueAt),
+        priority: normalizeOptionalString((body as { priority?: unknown }).priority) as
+          | "low"
+          | "normal"
+          | "high"
+          | "urgent"
+          | undefined,
+        source: normalizeOptionalString((body as { source?: unknown }).source) ?? "api",
+      });
+      return sendJson(res, 200, { ok: true, todo });
+    }
+
     if (req.method === "GET" && url.pathname === "/api/reminders") {
       const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
       const status = url.searchParams.get("status") || undefined;
+      const todoId = Number.parseInt(url.searchParams.get("todoId") ?? "", 10);
+      const from = normalizeOptionalString(url.searchParams.get("from"));
+      const to = normalizeOptionalString(url.searchParams.get("to"));
       const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
       const reminders = backbone.reminderService.listReminders({
         userExternalId,
         status: status === "all" ? undefined : (status as "pending" | "sent" | "cancelled" | undefined),
+        todoId: Number.isFinite(todoId) ? todoId : undefined,
+        from,
+        to,
         limit,
       });
       return sendJson(res, 200, { ok: true, reminders });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/reminders/due") {
+      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const asOf = normalizeOptionalString(url.searchParams.get("asOf")) ?? new Date().toISOString();
+      const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
+      const reminders = backbone.reminderService.listDueReminders({ userExternalId, asOf, limit });
+      return sendJson(res, 200, { ok: true, reminders });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/reminders/by-day") {
+      const day = normalizeOptionalString(url.searchParams.get("day"));
+      const timezone = normalizeOptionalString(url.searchParams.get("timezone"));
+      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const status = url.searchParams.get("status") || undefined;
+      const todoId = Number.parseInt(url.searchParams.get("todoId") ?? "", 10);
+      const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
+      const range = resolveDayRange({ day, timezone });
+      if (!range.ok || !range.fromUtcIso || !range.toUtcIso) {
+        return sendJson(res, 400, { ok: false, error: range.reason ?? "Invalid day range" });
+      }
+
+      const reminders = backbone.reminderService.listReminders({
+        userExternalId,
+        status: status === "all" ? undefined : (status as "pending" | "sent" | "cancelled" | undefined),
+        todoId: Number.isFinite(todoId) ? todoId : undefined,
+        from: range.fromUtcIso,
+        to: range.toUtcIso,
+        limit,
+      });
+
+      return sendJson(res, 200, {
+        ok: true,
+        day: range.day,
+        timezone: range.timezoneUsed,
+        fromUtc: range.fromUtcIso,
+        toUtc: range.toUtcIso,
+        reminders,
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/reminders") {
+      const body = await readJsonBody(req);
+      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
+        DEFAULT_USER_EXTERNAL_ID;
+      const remindAtDirect = normalizeOptionalString((body as { remindAt?: unknown }).remindAt);
+      const timeExpression = normalizeOptionalString((body as { timeExpression?: unknown }).timeExpression);
+      const timezone = normalizeOptionalString((body as { timezone?: unknown }).timezone);
+
+      let remindAt = remindAtDirect;
+      if (!remindAt && timeExpression) {
+        const resolved = resolveTimeExpression({ expression: timeExpression, timezone, requireTime: true });
+        if (!resolved.ok || !resolved.isoUtc || resolved.needsClarification) {
+          return sendJson(res, 400, {
+            ok: false,
+            error: resolved.reason ?? "Could not resolve reminder time",
+            details: resolved,
+          });
+        }
+        remindAt = resolved.isoUtc;
+      }
+
+      const reminder = backbone.reminderService.addReminder({
+        userExternalId,
+        todoId: typeof (body as { todoId?: unknown }).todoId === "number"
+          ? ((body as { todoId: number }).todoId)
+          : undefined,
+        text: normalizeOptionalString((body as { text?: unknown }).text) ?? "",
+        remindAt: remindAt ?? "",
+        timezone,
+        recurrenceRule: normalizeOptionalString((body as { recurrenceRule?: unknown }).recurrenceRule),
+        source: normalizeOptionalString((body as { source?: unknown }).source) ?? "api",
+      });
+      return sendJson(res, 200, { ok: true, reminder });
     }
 
     const todoPatch = req.method === "PATCH" ? url.pathname.match(/^\/api\/todos\/(\d+)$/) : null;

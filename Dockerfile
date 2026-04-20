@@ -19,4 +19,4 @@ ENV NODE_ENV=production
 # Start: run migrations/init, then run both processes:
 # - telegram relay bot (background)
 # - dashboard web server (foreground, binds PORT on Railway)
-CMD ["sh", "-lc", "npm run db:init && npm run telegram:bot & npm run dashboard"]
+CMD ["sh", "-lc", "npm run start:all"]
