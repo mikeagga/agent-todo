@@ -751,7 +751,8 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     promptSnippet: "Create time-based reminders in the local database.",
     promptGuidelines: [
       "Use this tool when the user asks to be reminded at a specific time.",
-      "If user gives natural language time, call resolve_time_expression first and pass remindAt as ISO datetime (timezone-aware; normalized for storage).",
+      "For relative requests like 'in 5 mins' or 'in 2 hours', prefer offsetMinutesFromNow.",
+      "If user gives natural language calendar time, call resolve_time_expression first and pass remindAt as ISO datetime (timezone-aware; normalized for storage).",
       "If reminder is for a specific todo, pass todoId so it is linked and auto-cleaned when todo completes/cancels.",
       "Pass remindAt as ISO date-time with timezone/offset context; system normalizes for storage.",
     ],
@@ -761,6 +762,9 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       text: Type.String({ description: "Reminder text" }),
       remindAt: Type.Optional(Type.String({ description: "ISO date-time, e.g. 2026-04-20T17:00:00Z" })),
       timeExpression: Type.Optional(Type.String({ description: "Natural-language time phrase, e.g. tomorrow at 9" })),
+      offsetMinutesFromNow: Type.Optional(
+        Type.Number({ description: "Relative offset from now in minutes (e.g. 5 for 'in 5 mins')", minimum: 1, maximum: 10080 }),
+      ),
       timezone: Type.Optional(Type.String({ description: "IANA timezone, e.g. America/New_York" })),
       recurrenceRule: Type.Optional(Type.String({ description: "RRULE string for recurrence" })),
       source: Type.Optional(Type.String({ description: "Origin tag" })),
@@ -769,11 +773,25 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       let remindAt = params.remindAt;
       let timezoneForReminder = params.timezone;
 
+      const modeCount = [remindAt ? 1 : 0, params.timeExpression ? 1 : 0, params.offsetMinutesFromNow ? 1 : 0].reduce(
+        (sum, n) => sum + n,
+        0,
+      );
+      if (modeCount > 1) {
+        return clarification("Use only one of remindAt, timeExpression, or offsetMinutesFromNow.", {
+          field: "remindAt",
+        });
+      }
+
       if (remindAt && !isIsoDateTime(remindAt)) {
         return clarification("remindAt must be an ISO date-time (e.g. 2026-04-20T17:00:00Z).", {
           field: "remindAt",
           received: remindAt,
         });
+      }
+
+      if (!remindAt && params.offsetMinutesFromNow !== undefined) {
+        remindAt = new Date(Date.now() + params.offsetMinutesFromNow * 60 * 1000).toISOString();
       }
 
       if (!remindAt && params.timeExpression) {
@@ -824,6 +842,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
           text: params.text,
           remindAt,
           timezone: timezoneForReminder,
+          offsetMinutesFromNow: params.offsetMinutesFromNow,
           recurrenceRule: params.recurrenceRule,
           source: params.source ?? "pi-agent",
         }),
@@ -858,13 +877,20 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       text: Type.Optional(Type.String({ description: "Updated reminder text" })),
       remindAt: Type.Optional(Type.String({ description: "ISO date-time, e.g. 2026-04-20T17:00:00Z" })),
       timeExpression: Type.Optional(Type.String({ description: "Natural-language time phrase, e.g. tomorrow at 9" })),
+      offsetMinutesFromNow: Type.Optional(
+        Type.Number({ description: "Relative offset from now in minutes (e.g. 5 for 'in 5 mins')", minimum: 1, maximum: 10080 }),
+      ),
       timezone: Type.Optional(Type.String({ description: "IANA timezone, e.g. America/New_York" })),
       recurrenceRule: Type.Optional(Type.String({ description: "RRULE string" })),
       clearRecurrenceRule: Type.Optional(Type.Boolean({ description: "Set true to remove recurrence" })),
     }),
     async execute(_toolCallId, params) {
-      if (params.remindAt && params.timeExpression) {
-        return clarification("Use either remindAt or timeExpression, not both.", {
+      const modeCount = [params.remindAt ? 1 : 0, params.timeExpression ? 1 : 0, params.offsetMinutesFromNow ? 1 : 0].reduce(
+        (sum, n) => sum + n,
+        0,
+      );
+      if (modeCount > 1) {
+        return clarification("Use only one of remindAt, timeExpression, or offsetMinutesFromNow.", {
           field: "remindAt",
         });
       }
@@ -883,6 +909,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
           field: "remindAt",
           received: remindAt,
         });
+      }
+
+      if (!remindAt && params.offsetMinutesFromNow !== undefined) {
+        remindAt = new Date(Date.now() + params.offsetMinutesFromNow * 60 * 1000).toISOString();
       }
 
       if (!remindAt && params.timeExpression) {
@@ -928,7 +958,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
 
       if (!hasAnyUpdate) {
         return clarification(
-          "Provide at least one field to update (text, remindAt/timeExpression, timezone, recurrenceRule, clearRecurrenceRule).",
+          "Provide at least one field to update (text, remindAt/timeExpression/offsetMinutesFromNow, timezone, recurrenceRule, clearRecurrenceRule).",
           { field: "reminderId" },
         );
       }

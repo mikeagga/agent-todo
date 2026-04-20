@@ -979,10 +979,28 @@ const server = createServer(async (req, res) => {
         DEFAULT_USER_EXTERNAL_ID;
       const remindAtDirect = normalizeOptionalString((body as { remindAt?: unknown }).remindAt);
       const timeExpression = normalizeOptionalString((body as { timeExpression?: unknown }).timeExpression);
+      const offsetMinutesFromNow =
+        typeof (body as { offsetMinutesFromNow?: unknown }).offsetMinutesFromNow === "number"
+          ? (body as { offsetMinutesFromNow: number }).offsetMinutesFromNow
+          : undefined;
       const timezone = normalizeOptionalString((body as { timezone?: unknown }).timezone);
+
+      const modeCount = [remindAtDirect ? 1 : 0, timeExpression ? 1 : 0, offsetMinutesFromNow !== undefined ? 1 : 0].reduce(
+        (sum, n) => sum + n,
+        0,
+      );
+      if (modeCount > 1) {
+        return sendJson(res, 400, { ok: false, error: "Use only one of remindAt, timeExpression, or offsetMinutesFromNow" });
+      }
 
       let remindAt = remindAtDirect;
       let timezoneFinal = timezone;
+      if (!remindAt && offsetMinutesFromNow !== undefined) {
+        if (!Number.isFinite(offsetMinutesFromNow) || offsetMinutesFromNow <= 0 || offsetMinutesFromNow > 10080) {
+          return sendJson(res, 400, { ok: false, error: "offsetMinutesFromNow must be between 1 and 10080" });
+        }
+        remindAt = new Date(Date.now() + offsetMinutesFromNow * 60 * 1000).toISOString();
+      }
       if (!remindAt && timeExpression) {
         const resolved = resolveTimeExpression({ expression: timeExpression, timezone, requireTime: true });
         if (!resolved.ok || !resolved.isoUtc || resolved.needsClarification) {
