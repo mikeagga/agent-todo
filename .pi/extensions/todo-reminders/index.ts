@@ -131,6 +131,8 @@ function formatDisplayDateTime(iso: string, timezone?: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
 
+  const zone = timezone?.trim() || process.env.DEFAULT_TIMEZONE?.trim();
+
   try {
     return new Intl.DateTimeFormat("en-US", {
       year: "numeric",
@@ -139,8 +141,7 @@ function formatDisplayDateTime(iso: string, timezone?: string): string {
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
-      timeZone: timezone,
-      timeZoneName: "short",
+      ...(zone ? { timeZone: zone, timeZoneName: "short" } : {}),
     }).format(date);
   } catch {
     return new Intl.DateTimeFormat("en-US", {
