@@ -103,6 +103,7 @@ Set env vars in `.env` or your hosting platform.
 - `PI_PROVIDER` / `PI_MODEL` (optional)
 - `PI_EXTRA_ARGS` (optional)
 - `PI_PROMPT_PREFIX` (optional; lightweight tone/style instruction prepended to every relayed prompt)
+- `PI_RPC_IDLE_MINUTES` (default `30`; closes idle pi rpc process and auto-starts a new instance on next prompt)
 
 ### Backbone API client (extension)
 

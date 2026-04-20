@@ -34,6 +34,7 @@ const REMINDER_SEND_RETRY_BASE_MS = Number.parseInt(process.env.REMINDER_SEND_RE
 const AUTO_PI_SCHEDULES_FILE = path.resolve(process.cwd(), ".pi", "auto-pi-schedules.json");
 const AUTO_PI_DEFAULT_TIMEZONE = withDefaultTimezone(process.env.DEFAULT_TIMEZONE);
 const RELAY_DEFAULT_TIMEZONE = withDefaultTimezone(process.env.DEFAULT_TIMEZONE);
+const PI_RPC_IDLE_MINUTES = Number.parseInt(process.env.PI_RPC_IDLE_MINUTES ?? "30", 10) || 30;
 
 type RpcResponse = {
   id?: string;
@@ -187,7 +188,9 @@ class PiRpcClient {
 }
 
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
-const rpc = new PiRpcClient();
+let rpc: PiRpcClient | null = null;
+let rpcIdleTimer: NodeJS.Timeout | null = null;
+let rpcLastActivityAt = Date.now();
 const backbone = createBackbone({ filePath: process.env.DB_PATH });
 let reminderInterval: NodeJS.Timeout | null = null;
 let reminderPollingInFlight = false;
@@ -212,6 +215,56 @@ type AutoPiSchedulesConfig = {
   schedules: AutoPiSchedule[];
   source: string;
 };
+
+function ensureRpc(): PiRpcClient {
+  if (!rpc) {
+    rpc = new PiRpcClient();
+    rpc.on("stderr", (line) => {
+      console.error(`[pi-rpc stderr] ${String(line)}`);
+    });
+
+    rpc.on("parse_error", (err) => {
+      console.error(`[pi-rpc parse error] ${JSON.stringify(err)}`);
+    });
+
+    rpc.on("exit", (err) => {
+      console.error(`[pi-rpc exit] ${err instanceof Error ? err.message : String(err)}`);
+      rpc = null;
+    });
+
+    console.log("[pi-rpc] started");
+  }
+  return rpc;
+}
+
+function touchRpcActivity() {
+  rpcLastActivityAt = Date.now();
+  if (PI_RPC_IDLE_MINUTES <= 0) return;
+  if (rpcIdleTimer) clearTimeout(rpcIdleTimer);
+
+  rpcIdleTimer = setTimeout(() => {
+    const idleMs = Date.now() - rpcLastActivityAt;
+    const thresholdMs = PI_RPC_IDLE_MINUTES * 60 * 1000;
+    if (idleMs < thresholdMs || !rpc) return;
+
+    console.log(`[pi-rpc] idle for ${Math.floor(idleMs / 1000)}s, shutting down instance`);
+    rpc.close();
+    rpc = null;
+  }, PI_RPC_IDLE_MINUTES * 60 * 1000 + 1000);
+}
+
+async function runPromptViaRpc(prompt: string): Promise<string> {
+  touchRpcActivity();
+  const client = ensureRpc();
+  try {
+    const reply = await client.runPrompt(prompt);
+    touchRpcActivity();
+    return reply;
+  } catch (error) {
+    touchRpcActivity();
+    throw error;
+  }
+}
 
 function parseChatId(value?: string | number | null): number | null {
   if (value === undefined || value === null || value === "") return null;
@@ -499,7 +552,7 @@ async function sendTelegramText(chatId: number, text: string): Promise<void> {
 function enqueueAgentPrompt(chatId: number, prompt: string, originLabel?: string): void {
   queue = queue
     .then(async () => {
-      const reply = await rpc.runPrompt(applyPromptPrefix(prompt));
+      const reply = await runPromptViaRpc(applyPromptPrefix(prompt));
       const header = originLabel ? `🗓️ ${originLabel}\n\n` : "";
       await sendTelegramText(chatId, `${header}${reply}`);
     })
@@ -552,7 +605,7 @@ async function handleMessage(msg: Message): Promise<void> {
     return;
   }
 
-  const reply = await rpc.runPrompt(applyPromptPrefix(text));
+  const reply = await runPromptViaRpc(applyPromptPrefix(text));
   await sendTelegramText(chatId, reply);
 }
 
@@ -564,18 +617,6 @@ bot.on("message", (msg) => {
         await sendTelegramText(msg.chat.id, `Sorry, relay error: ${error instanceof Error ? error.message : String(error)}`);
       }
     });
-});
-
-rpc.on("stderr", (line) => {
-  console.error(`[pi-rpc stderr] ${String(line)}`);
-});
-
-rpc.on("parse_error", (err) => {
-  console.error(`[pi-rpc parse error] ${JSON.stringify(err)}`);
-});
-
-rpc.on("exit", (err) => {
-  console.error(`[pi-rpc exit] ${err instanceof Error ? err.message : String(err)}`);
 });
 
 async function shutdown() {
@@ -591,7 +632,14 @@ async function shutdown() {
     }
 
   } finally {
-    rpc.close();
+    if (rpcIdleTimer) {
+      clearTimeout(rpcIdleTimer);
+      rpcIdleTimer = null;
+    }
+    if (rpc) {
+      rpc.close();
+      rpc = null;
+    }
     backbone.close();
   }
 }
@@ -608,6 +656,7 @@ process.on("SIGTERM", async () => {
 
 (async () => {
   console.log("Telegram bot started (relay mode, polling).");
+  console.log(`[pi-rpc] idle restart enabled: ${PI_RPC_IDLE_MINUTES} minute(s)`);
 
   if (REMINDER_NOTIFICATIONS_ENABLED) {
     await pollAndPushDueReminders();
