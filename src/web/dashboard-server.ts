@@ -187,6 +187,15 @@ function dashboardHtml(): string {
       padding: 8px;
       margin-bottom: 15px;
     }
+    .fc .fc-daygrid-event,
+    .fc .fc-daygrid-event .fc-event-title,
+    .fc .fc-event-title-container {
+      white-space: normal;
+    }
+    .fc .fc-daygrid-event .fc-event-title {
+      overflow-wrap: anywhere;
+      line-height: 1.2;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -404,11 +413,12 @@ function dashboardHtml(): string {
 <body>
   <div class="container">
     <div class="ascii-banner">
- _____ ___  ____   ___    ____    _    ____  _   _ ____   ___    _    ____  ____  
-|_   _/ _ \\|  _ \\ / _ \\  |  _ \\  / \\  / ___|| | | | __ ) / _ \\  / \\  |  _ \\|  _ \\ 
-  | || | | | | | | | | | | | | |/ _ \\ \\___ \\| |_| |  _ \\| | | |/ _ \\ | |_) | | | |
-  | || |_| | |_| | |_| | | |_| / ___ \\ ___) |  _  | |_) | |_| / ___ \\|  _ <| |_| |
-  |_| \\___/|____/ \\___/  |____/_/   \\_\\____/|_| |_|____/ \\___/_/   \\_\\_| \\_\\____/ 
+		                       ________  .__       .__  __         .__            ________                .__   ___.                          .___                          
+                  /\|\/\   \______ \ |__| ____ |__|/  |______  |  |           \______ \ _____    _____|  |__\_ |__   _________ _______  __| _/  /\|\/\                  
+         ______  _)    (__  |    |  \|  |/ ___\|  \   __\__  \ |  |    ______  |    |  \\__  \  /  ___/  |  \| __ \ /  _ \__  \\_  __ \/ __ |  _)    (__   ______       
+        /_____/  \_     _/  |    `   \  / /_/  >  ||  |  / __ \|  |__ /_____/  |    `   \/ __ \_\___ \|   Y  \ \_\ (  <_> ) __ \|  | \/ /_/ |  \_     _/  /_____/       
+ ______            )    \  /_______  /__\___  /|__||__| (____  /____/         /_______  (____  /____  >___|  /___  /\____(____  /__|  \____ |    )    \           ______
+/_____/            \/\|\/          \/  /_____/               \/                       \/     \/     \/     \/    \/           \/           \/    \/\|\/          /_____/
     </div>
     <marquee>Welcome to my Todo Dashboard! * This site best viewed in Netscape Navigator * Last updated: 2026-04-18</marquee>
     <h1><img src="/cooltext.gif" alt="TODO DASHBOARD" style="max-width: 100%; height: auto;"></h1>
