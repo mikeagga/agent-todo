@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -397,6 +398,8 @@ function dashboardHtml(): string {
       }
     }
   </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -483,6 +486,13 @@ function dashboardHtml(): string {
           <option value="cancelled">cancelled</option>
         </select>
       </div>
+      <div class="field auto">
+        <label>Sort By</label>
+        <select id="todoSort">
+          <option value="due-asc" selected>due (soonest)</option>
+          <option value="due-desc">due (latest)</option>
+        </select>
+      </div>
     </div>
 
     <div class="table-scroll">
@@ -492,6 +502,11 @@ function dashboardHtml(): string {
         </thead>
         <tbody id="todoRows"></tbody>
       </table>
+    </div>
+
+    <h2>>>> CALENDAR <<<</h2>
+    <div class="table-scroll">
+      <div id="calendar"></div>
     </div>
 
     <h2>>>> MY REMINDERS <<<</h2>
@@ -589,6 +604,25 @@ function dashboardHtml(): string {
   function userId() { return userIdInput.value || 'demo-user'; }
   function getToken() { return tokenInput.value.trim(); }
 
+  let cachedTodos = [];
+  let cachedReminders = [];
+  let calendarInstance = null;
+
+  function toLocalDatetimeInput(iso) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    const offset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  }
+
+  function toIsoFromLocalInput(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString();
+  }
+
   function setStatus(msg, isError = false) {
     statusEl.textContent = '*** ' + msg + ' ***';
     statusEl.style.color = isError ? '#ff0000' : '#000080';
@@ -613,27 +647,50 @@ function dashboardHtml(): string {
 
   async function loadTodos() {
     const filter = document.getElementById('todoStatusFilter').value;
+    const sortMode = document.getElementById('todoSort').value;
     const params = new URLSearchParams({ userExternalId: userId() });
     if (filter !== 'all') params.set('status', filter);
     const todosRes = await api('/api/todos?' + params);
     const todos = Array.isArray(todosRes?.todos) ? todosRes.todos : [];
+    cachedTodos = todos;
+
+    const sorted = [...todos].sort((a, b) => {
+      const aDue = a.dueAt ? Date.parse(a.dueAt) : Number.POSITIVE_INFINITY;
+      const bDue = b.dueAt ? Date.parse(b.dueAt) : Number.POSITIVE_INFINITY;
+      if (sortMode === 'due-desc') return bDue - aDue;
+      return aDue - bDue;
+    });
+
     const tbody = document.getElementById('todoRows');
     tbody.innerHTML = '';
-    for (const t of todos) {
+    for (const t of sorted) {
       const tr = tbody.insertRow();
+      tr.dataset.todoId = t.id;
+      const dueValue = toLocalDatetimeInput(t.dueAt);
+      const priority = t.priority || 'normal';
       tr.innerHTML = \`
         <td>\${t.id}</td>
         <td class="priority-\${t.status || 'normal'}">\${t.status}</td>
-        <td>\${t.title}</td>
-        <td>\${t.notes || ''}</td>
-        <td class="priority-\${t.priority || 'normal'}">\${t.priority || 'normal'}</td>
-        <td><code>\${t.dueAt || ''}</code></td>
+        <td><input class="todo-title" type="text" value="\${t.title || ''}" /></td>
+        <td><input class="todo-notes" type="text" value="\${t.notes || ''}" /></td>
+        <td>
+          <select class="todo-priority">
+            <option value="low" \${priority === 'low' ? 'selected' : ''}>low</option>
+            <option value="normal" \${priority === 'normal' ? 'selected' : ''}>normal</option>
+            <option value="high" \${priority === 'high' ? 'selected' : ''}>high</option>
+            <option value="urgent" \${priority === 'urgent' ? 'selected' : ''}>urgent</option>
+          </select>
+        </td>
+        <td><input class="todo-due" type="datetime-local" value="\${dueValue}" /></td>
         <td class="row">
+          <button class="small" data-action="saveTodo" data-id="\${t.id}">Save</button>
           \${t.status === 'open' ? '<button class="small" data-action="completeTodo" data-id="' + t.id + '">Complete</button>' : ''}
           <button class="small danger" data-action="cancelTodo" data-id="\${t.id}">Cancel</button>
         </td>
       \`;
     }
+
+    updateCalendar();
   }
 
   async function loadReminders() {
@@ -642,6 +699,7 @@ function dashboardHtml(): string {
     if (filter !== 'all') params.set('status', filter);
     const remindersRes = await api('/api/reminders?' + params);
     const reminders = Array.isArray(remindersRes?.reminders) ? remindersRes.reminders : [];
+    cachedReminders = reminders;
     const tbody = document.getElementById('reminderRows');
     tbody.innerHTML = '';
     for (const r of reminders) {
@@ -658,6 +716,54 @@ function dashboardHtml(): string {
         </td>
       \`;
     }
+
+    updateCalendar();
+  }
+
+  function buildCalendarEvents() {
+    const todoEvents = cachedTodos
+      .filter((todo) => !!todo.dueAt)
+      .map((todo) => ({
+        id: 'todo-' + todo.id,
+        title: 'Todo: ' + todo.title,
+        start: todo.dueAt,
+        allDay: false,
+        backgroundColor: '#0066cc',
+        borderColor: '#0066cc',
+      }));
+
+    const reminderEvents = cachedReminders.map((reminder) => ({
+      id: 'reminder-' + reminder.id,
+      title: 'Reminder: ' + reminder.text,
+      start: reminder.remindAt,
+      allDay: false,
+      backgroundColor: '#ff6600',
+      borderColor: '#ff6600',
+    }));
+
+    return [...todoEvents, ...reminderEvents];
+  }
+
+  function updateCalendar() {
+    const calendarEl = document.getElementById('calendar');
+    if (!calendarEl || !window.FullCalendar) return;
+
+    if (!calendarInstance) {
+      calendarInstance = new window.FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        height: 'auto',
+        headerToolbar: {
+          left: 'prev,next today',
+          center: 'title',
+          right: 'dayGridMonth,timeGridWeek,timeGridDay',
+        },
+      });
+      calendarInstance.render();
+    }
+
+    const events = buildCalendarEvents();
+    calendarInstance.removeAllEvents();
+    calendarInstance.addEventSource(events);
   }
 
   async function reloadAll() {
@@ -672,6 +778,7 @@ function dashboardHtml(): string {
 
   document.getElementById('reload').onclick = reloadAll;
   document.getElementById('todoStatusFilter').onchange = loadTodos;
+  document.getElementById('todoSort').onchange = loadTodos;
   document.getElementById('reminderStatusFilter').onchange = loadReminders;
 
   document.getElementById('createTodo').onclick = async () => {
@@ -724,6 +831,31 @@ function dashboardHtml(): string {
       } else if (btn.dataset.action === 'cancelTodo') {
         await api('/api/todos/' + id + '/cancel', { method: 'POST', body: JSON.stringify({ userExternalId: userId() }) });
         setStatus('Todo #' + id + ' cancelled.');
+      } else if (btn.dataset.action === 'saveTodo') {
+        const row = btn.closest('tr');
+        if (!row) return;
+        const title = row.querySelector('.todo-title')?.value?.trim() || '';
+        const notesValue = row.querySelector('.todo-notes')?.value ?? '';
+        const priority = row.querySelector('.todo-priority')?.value;
+        const dueValue = row.querySelector('.todo-due')?.value ?? '';
+
+        const body = { userExternalId: userId(), title, priority };
+
+        if (notesValue.trim().length === 0) {
+          body.clearNotes = true;
+        } else {
+          body.notes = notesValue;
+        }
+
+        const dueIso = toIsoFromLocalInput(dueValue);
+        if (dueValue.trim().length === 0) {
+          body.clearDueAt = true;
+        } else if (dueIso) {
+          body.dueAt = dueIso;
+        }
+
+        await api('/api/todos/' + id, { method: 'PATCH', body: JSON.stringify(body) });
+        setStatus('Todo #' + id + ' updated.');
       } else if (btn.dataset.action === 'cancelReminder') {
         await api('/api/reminders/' + id + '/cancel', { method: 'POST', body: JSON.stringify({ userExternalId: userId() }) });
         setStatus('Reminder #' + id + ' cancelled.');
@@ -795,6 +927,7 @@ const server = createServer(async (req, res) => {
             "PATCH /api/reminders/:id",
             "POST /api/reminders/:id/cancel",
           ],
+          memory: ["GET /api/memory", "POST /api/memory", "DELETE /api/memory/:key"],
         },
       });
     }
@@ -820,6 +953,50 @@ const server = createServer(async (req, res) => {
       const timezone = normalizeOptionalString((body as { timezone?: unknown }).timezone);
       const range = resolveDayRange({ day, timezone });
       return sendJson(res, 200, { ok: true, range });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/memory") {
+      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const category = normalizeOptionalString(url.searchParams.get("category"));
+      const key = normalizeOptionalString(url.searchParams.get("key"));
+      const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
+
+      if (key) {
+        const memory = backbone.memoryService.getUserMemory(userExternalId, key);
+        return sendJson(res, 200, { ok: true, memory });
+      }
+
+      const memory = backbone.memoryService.listUserMemory(userExternalId, { category, limit });
+      return sendJson(res, 200, { ok: true, memory });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/memory") {
+      const body = await readJsonBody(req);
+      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
+        DEFAULT_USER_EXTERNAL_ID;
+      const key = normalizeOptionalString((body as { key?: unknown }).key) ?? randomUUID();
+      const category = normalizeOptionalString((body as { category?: unknown }).category);
+      const value = (body as { value?: unknown; text?: unknown }).value ?? (body as { text?: unknown }).text;
+
+      if (value === undefined) {
+        return sendJson(res, 400, { ok: false, error: "value is required" });
+      }
+
+      const memory = backbone.memoryService.upsertUserMemory(userExternalId, key, value, category ? { category } : undefined);
+      return sendJson(res, 200, { ok: true, memory });
+    }
+
+    const memoryDelete = req.method === "DELETE" ? url.pathname.match(/^\/api\/memory\/(.+)$/) : null;
+    if (memoryDelete) {
+      const key = decodeURIComponent(memoryDelete[1] ?? "");
+      if (!key) {
+        return sendJson(res, 400, { ok: false, error: "key is required" });
+      }
+      const body = await readJsonBody(req);
+      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
+        DEFAULT_USER_EXTERNAL_ID;
+      const deleted = backbone.memoryService.deleteUserMemory(userExternalId, key);
+      return sendJson(res, 200, { ok: true, key, deleted });
     }
 
     if (req.method === "GET" && url.pathname === "/api/todos") {

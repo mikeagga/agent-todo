@@ -216,6 +216,24 @@ export class MemoryService {
     return rows.map(mapUserMemory);
   }
 
+  getUserMemory(userExternalId: string, key: string): UserMemory | null {
+    const userId = this.users.ensureUser(userExternalId);
+    const row = this.db
+      .prepare("SELECT * FROM user_memory WHERE user_id = ? AND key = ?")
+      .get(userId, key) as UserMemoryRow | undefined;
+
+    return row ? mapUserMemory(row) : null;
+  }
+
+  deleteUserMemory(userExternalId: string, key: string): boolean {
+    const userId = this.users.ensureUser(userExternalId);
+    const result = this.db
+      .prepare("DELETE FROM user_memory WHERE user_id = ? AND key = ?")
+      .run(userId, key);
+
+    return result.changes > 0;
+  }
+
   getOrStartConversationSession(
     userExternalId: string,
     options?: { idleTimeoutMinutes?: number; now?: string },

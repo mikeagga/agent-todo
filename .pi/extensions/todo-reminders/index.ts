@@ -1292,6 +1292,97 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "remember",
+    label: "Remember",
+    description: "Store a long-term memory fact for the user",
+    promptSnippet: "Persist a long-term memory fact for the user.",
+    parameters: Type.Object({
+      userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
+      text: Type.String({ description: "Memory text to store" }),
+      category: Type.Optional(Type.String({ description: "Optional category label" })),
+    }),
+    async execute(_toolCallId, params) {
+      const memoryResp = await apiRequest<{ ok: true; memory: Record<string, unknown> }>("/api/memory", {
+        method: "POST",
+        body: JSON.stringify({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          value: params.text,
+          category: params.category,
+        }),
+      });
+
+      const created = memoryResp.memory as { key: string; value: unknown; category?: string };
+      return {
+        content: [{ type: "text", text: `Saved memory (${created.key}).` }],
+        details: created,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "recall",
+    label: "Recall",
+    description: "List stored memory facts for the user",
+    promptSnippet: "List stored long-term memory facts.",
+    parameters: Type.Object({
+      userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
+      category: Type.Optional(Type.String({ description: "Optional category filter" })),
+      limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
+    }),
+    async execute(_toolCallId, params) {
+      const memoryResp = await apiRequest<{ ok: true; memory: Array<Record<string, unknown>> }>(
+        `/api/memory?${new URLSearchParams({
+          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          ...(params.category ? { category: params.category } : {}),
+          ...(params.limit ? { limit: String(params.limit) } : {}),
+        }).toString()}`,
+      );
+
+      const memory = memoryResp.memory as Array<{ key: string; value: unknown; category?: string }>;
+      const lines = memory.length
+        ? memory.map((item, index) => `${index + 1}. ${item.key}: ${toText(item.value)}`)
+        : ["No stored memory yet."];
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { count: memory.length, memory },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "forget",
+    label: "Forget",
+    description: "Delete a stored memory by key",
+    promptSnippet: "Delete a stored memory by key.",
+    parameters: Type.Object({
+      userExternalId: Type.Optional(Type.String({ description: "User id (defaults to TODO_USER_ID or local-user)" })),
+      key: Type.String({ description: "Memory key to delete" }),
+    }),
+    async execute(_toolCallId, params) {
+      const forgetResp = await apiRequest<{ ok: true; key: string; deleted: boolean }>(
+        `/api/memory/${encodeURIComponent(params.key)}`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({ userExternalId: params.userExternalId ?? defaultUserExternalId }),
+        },
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: forgetResp.deleted
+              ? `Deleted memory (${forgetResp.key}).`
+              : `No memory found for key (${forgetResp.key}).`,
+          },
+        ],
+        details: forgetResp,
+      };
+    },
+  });
+
   pi.registerCommand("todo-api-capabilities", {
     description: "Show backbone API capabilities",
     handler: async (_args, ctx) => {
