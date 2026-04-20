@@ -96,18 +96,20 @@ export function resolveTimeExpression(input: {
   const best = results[0];
   const start = best.start;
 
-  const dt = DateTime.fromObject(
-    {
-      year: start.get("year") ?? undefined,
-      month: start.get("month") ?? undefined,
-      day: start.get("day") ?? undefined,
-      hour: start.get("hour") ?? undefined,
-      minute: start.get("minute") ?? undefined,
-      second: start.get("second") ?? undefined,
-      millisecond: start.get("millisecond") ?? undefined,
-    },
-    { zone },
-  );
+  const dt = start.isCertain("timezoneOffset")
+    ? DateTime.fromJSDate(start.date(), { zone: "utc" })
+    : DateTime.fromObject(
+      {
+        year: start.get("year") ?? undefined,
+        month: start.get("month") ?? undefined,
+        day: start.get("day") ?? undefined,
+        hour: start.get("hour") ?? undefined,
+        minute: start.get("minute") ?? undefined,
+        second: start.get("second") ?? undefined,
+        millisecond: start.get("millisecond") ?? undefined,
+      },
+      { zone },
+    );
 
   if (!dt.isValid) {
     return {
