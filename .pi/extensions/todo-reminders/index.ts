@@ -767,6 +767,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params) {
       let remindAt = params.remindAt;
+      let timezoneForReminder = params.timezone;
 
       if (remindAt && !isIsoDateTime(remindAt)) {
         return clarification("remindAt must be an ISO date-time (e.g. 2026-04-20T17:00:00Z).", {
@@ -797,6 +798,9 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         }
 
         remindAt = resolved.isoUtc;
+        if (!timezoneForReminder && resolved.timezoneUsed) {
+          timezoneForReminder = resolved.timezoneUsed;
+        }
       }
 
       if (!remindAt) {
@@ -819,7 +823,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
           todoId: params.todoId,
           text: params.text,
           remindAt,
-          timezone: params.timezone,
+          timezone: timezoneForReminder,
           recurrenceRule: params.recurrenceRule,
           source: params.source ?? "pi-agent",
         }),
@@ -872,6 +876,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       }
 
       let remindAt = params.remindAt;
+      let timezoneForUpdate = params.timezone;
 
       if (remindAt && !isIsoDateTime(remindAt)) {
         return clarification("remindAt must be an ISO date-time (e.g. 2026-04-20T17:00:00Z).", {
@@ -902,6 +907,9 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         }
 
         remindAt = resolved.isoUtc;
+        if (!timezoneForUpdate && resolved.timezoneUsed) {
+          timezoneForUpdate = resolved.timezoneUsed;
+        }
       }
 
       if (params.recurrenceRule && !isValidRecurrenceRule(params.recurrenceRule)) {
@@ -933,7 +941,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
             userExternalId: params.userExternalId ?? defaultUserExternalId,
             text: params.text,
             remindAt,
-            timezone: params.timezone,
+            timezone: timezoneForUpdate,
             recurrenceRule: params.recurrenceRule,
             clearRecurrenceRule: params.clearRecurrenceRule,
           }),

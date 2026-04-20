@@ -11,6 +11,7 @@ const HOST = process.env.DASHBOARD_HOST ?? "0.0.0.0";
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN?.trim();
 const DEFAULT_USER_EXTERNAL_ID = process.env.TODO_USER_ID ?? "local-user";
 const API_CAPABILITIES_VERSION = "2026-04-19";
+const REMINDER_PAST_GRACE_SECONDS = Number.parseInt(process.env.REMINDER_PAST_GRACE_SECONDS ?? "60", 10) || 60;
 
 const backbone = createBackbone({ filePath: process.env.DB_PATH });
 
@@ -981,6 +982,7 @@ const server = createServer(async (req, res) => {
       const timezone = normalizeOptionalString((body as { timezone?: unknown }).timezone);
 
       let remindAt = remindAtDirect;
+      let timezoneFinal = timezone;
       if (!remindAt && timeExpression) {
         const resolved = resolveTimeExpression({ expression: timeExpression, timezone, requireTime: true });
         if (!resolved.ok || !resolved.isoUtc || resolved.needsClarification) {
@@ -991,6 +993,25 @@ const server = createServer(async (req, res) => {
           });
         }
         remindAt = resolved.isoUtc;
+        if (!timezoneFinal && resolved.timezoneUsed) timezoneFinal = resolved.timezoneUsed;
+      }
+
+      if (!remindAt) {
+        return sendJson(res, 400, { ok: false, error: "remindAt or timeExpression is required" });
+      }
+
+      const remindAtMs = Date.parse(remindAt);
+      if (!Number.isFinite(remindAtMs)) {
+        return sendJson(res, 400, { ok: false, error: "Invalid remindAt" });
+      }
+
+      const nowMs = Date.now();
+      const graceMs = REMINDER_PAST_GRACE_SECONDS * 1000;
+      if (remindAtMs < nowMs - graceMs) {
+        return sendJson(res, 400, {
+          ok: false,
+          error: `remindAt is in the past (more than ${REMINDER_PAST_GRACE_SECONDS}s). Please provide a future time.`,
+        });
       }
 
       const reminder = backbone.reminderService.addReminder({
@@ -999,8 +1020,8 @@ const server = createServer(async (req, res) => {
           ? ((body as { todoId: number }).todoId)
           : undefined,
         text: normalizeOptionalString((body as { text?: unknown }).text) ?? "",
-        remindAt: remindAt ?? "",
-        timezone,
+        remindAt,
+        timezone: timezoneFinal,
         recurrenceRule: normalizeOptionalString((body as { recurrenceRule?: unknown }).recurrenceRule),
         source: normalizeOptionalString((body as { source?: unknown }).source) ?? "api",
       });
