@@ -154,6 +154,7 @@ export const UpdateReminderInputSchema = z
     text: z.string().min(1).optional(),
     remindAt: z.string().datetime({ offset: true }).optional(),
     timezone: z.string().optional(),
+    todoId: z.number().int().positive().optional(),
     recurrenceRule: z
       .string()
       .refine((value) => isValidRecurrenceRule(value), {
@@ -176,6 +177,7 @@ export const UpdateReminderInputSchema = z
       value.text === undefined &&
       value.remindAt === undefined &&
       value.timezone === undefined &&
+      value.todoId === undefined &&
       value.recurrenceRule === undefined &&
       !value.clearRecurrenceRule
     ) {

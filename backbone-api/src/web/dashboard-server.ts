@@ -1415,6 +1415,9 @@ const server = createServer(async (req, res) => {
         text: normalizeOptionalString((body as { text?: unknown }).text),
         remindAt: normalizeOptionalString((body as { remindAt?: unknown }).remindAt),
         timezone: normalizeOptionalString((body as { timezone?: unknown }).timezone),
+        todoId: typeof (body as { todoId?: unknown }).todoId === "number"
+          ? (body as { todoId: number }).todoId
+          : undefined,
         recurrenceRule: normalizeOptionalString((body as { recurrenceRule?: unknown }).recurrenceRule),
         clearRecurrenceRule: (body as { clearRecurrenceRule?: unknown }).clearRecurrenceRule === true,
       });

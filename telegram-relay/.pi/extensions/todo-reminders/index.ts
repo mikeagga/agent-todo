@@ -928,6 +928,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       timezone: Type.Optional(Type.String({ description: "IANA timezone, e.g. America/New_York" })),
       recurrenceRule: Type.Optional(Type.String({ description: "RRULE string" })),
       clearRecurrenceRule: Type.Optional(Type.Boolean({ description: "Set true to remove recurrence" })),
+      todoId: Type.Optional(Type.Number({ description: "Link reminder to todo id" })),
     }),
     async execute(_toolCallId, params) {
       const userGate = resolveUserExternalId(params.userExternalId, "update reminder");
@@ -1002,6 +1003,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         params.text !== undefined ||
         remindAt !== undefined ||
         params.timezone !== undefined ||
+        params.todoId !== undefined ||
         params.recurrenceRule !== undefined ||
         params.clearRecurrenceRule === true;
 
@@ -1021,6 +1023,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
             text: params.text,
             remindAt,
             timezone: timezoneForUpdate,
+            todoId: params.todoId,
             recurrenceRule: params.recurrenceRule,
             clearRecurrenceRule: params.clearRecurrenceRule,
           }),

@@ -238,6 +238,22 @@ export class ReminderService {
       params.timezone = parsed.timezone;
     }
 
+    if (parsed.todoId !== undefined) {
+      const todoRow = this.db
+        .prepare("SELECT id, user_id FROM todos WHERE id = ?")
+        .get(parsed.todoId) as { id: number; user_id: number } | undefined;
+
+      if (!todoRow) {
+        throw new Error(`Todo ${parsed.todoId} not found`);
+      }
+      if (todoRow.user_id !== userId) {
+        throw new Error(`Todo ${parsed.todoId} does not belong to user ${parsed.userExternalId}`);
+      }
+
+      sets.push("todo_id = @todo_id");
+      params.todo_id = parsed.todoId;
+    }
+
     if (parsed.clearRecurrenceRule) {
       sets.push("recurrence_rule = NULL");
     } else if (parsed.recurrenceRule !== undefined) {
