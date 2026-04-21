@@ -27,3 +27,5 @@ npm run start
 - HMAC header: `X-Reminder-Signature: sha256=<hex>`
 
 The relay routes reminders based on `userExternalId` (e.g. `tg:<chatId>`). No fallback chat id is used for reminders.
+
+The backbone client extension is bundled at `telegram-relay/.pi/extensions/todo-reminders`.
