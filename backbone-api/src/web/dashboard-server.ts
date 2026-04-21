@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,11 +10,103 @@ import { resolveDayRange, resolveTimeExpression } from "../time/protocol.js";
 const PORT = Number.parseInt(process.env.DASHBOARD_PORT ?? process.env.PORT ?? "8787", 10) || 8787;
 const HOST = process.env.DASHBOARD_HOST ?? "0.0.0.0";
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN?.trim();
-const DEFAULT_USER_EXTERNAL_ID = process.env.TODO_USER_ID ?? "local-user";
 const API_CAPABILITIES_VERSION = "2026-04-19";
 const REMINDER_PAST_GRACE_SECONDS = Number.parseInt(process.env.REMINDER_PAST_GRACE_SECONDS ?? "60", 10) || 60;
+const REMINDER_POLL_SECONDS = Number.parseInt(process.env.REMINDER_POLL_SECONDS ?? "30", 10) || 30;
+const REMINDER_DISPATCH_STALE_SECONDS = Number.parseInt(process.env.REMINDER_DISPATCH_STALE_SECONDS ?? "120", 10) || 120;
+const REMINDER_WEBHOOK_URL = process.env.REMINDER_WEBHOOK_URL?.trim();
+const REMINDER_WEBHOOK_SECRET = process.env.REMINDER_WEBHOOK_SECRET?.trim();
 
 const backbone = createBackbone({ filePath: process.env.DB_PATH });
+let reminderDispatchInterval: NodeJS.Timeout | null = null;
+
+function listUserExternalIds(): string[] {
+  const rows = backbone.db
+    .prepare("SELECT external_id FROM users ORDER BY id")
+    .all() as Array<{ external_id: string }>;
+  return rows.map((row) => row.external_id);
+}
+
+function signWebhookPayload(payload: string, secret: string): string {
+  const signature = createHmac("sha256", secret).update(payload).digest("hex");
+  return `sha256=${signature}`;
+}
+
+async function dispatchDueReminders(): Promise<void> {
+  if (!REMINDER_WEBHOOK_URL || !REMINDER_WEBHOOK_SECRET) return;
+
+  const nowIso = new Date().toISOString();
+  const claimed: Array<{ reminderId: number; claimToken: string }> = [];
+  const payloadReminders: Array<Record<string, unknown>> = [];
+
+  for (const userExternalId of listUserExternalIds()) {
+    const due = backbone.reminderService.listDueReminders({
+      userExternalId,
+      asOf: nowIso,
+      limit: 200,
+    });
+
+    for (const reminder of due) {
+      const claimToken = randomUUID();
+      const claimedOk = backbone.reminderService.claimReminderForDispatch(reminder.id, {
+        claimToken,
+        staleAfterSeconds: REMINDER_DISPATCH_STALE_SECONDS,
+      });
+      if (!claimedOk) continue;
+
+      claimed.push({ reminderId: reminder.id, claimToken });
+      payloadReminders.push({
+        id: reminder.id,
+        userExternalId,
+        text: reminder.text,
+        remindAt: reminder.remindAt,
+        timezone: reminder.timezone,
+        todoId: reminder.todoId,
+      });
+    }
+  }
+
+  if (payloadReminders.length === 0) return;
+
+  const payload = JSON.stringify({
+    event: "reminder_due",
+    sentAt: nowIso,
+    reminders: payloadReminders,
+  });
+
+  try {
+    const res = await fetch(REMINDER_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-reminder-signature": signWebhookPayload(payload, REMINDER_WEBHOOK_SECRET),
+      },
+      body: payload,
+    });
+
+    if (!res.ok) {
+      const message = `HTTP ${res.status}`;
+      for (const item of claimed) {
+        backbone.reminderService.markReminderDispatchFailed(item.reminderId, message, item.claimToken);
+      }
+      console.warn(`[reminder webhook] failed ${message} payload=${payloadReminders.length}`);
+      return;
+    }
+
+    for (const item of claimed) {
+      backbone.reminderService.markReminderSent(item.reminderId);
+      backbone.reminderService.markReminderDispatchSent(item.reminderId, item.claimToken);
+    }
+
+    console.log(`[reminder webhook] sent ${payloadReminders.length} reminders`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    for (const item of claimed) {
+      backbone.reminderService.markReminderDispatchFailed(item.reminderId, message, item.claimToken);
+    }
+    console.warn(`[reminder webhook] error ${message}`);
+  }
+}
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   res.statusCode = status;
@@ -58,6 +150,15 @@ function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function requireUserExternalId(value: unknown, res: ServerResponse): string | null {
+  const userExternalId = normalizeOptionalString(value);
+  if (!userExternalId) {
+    sendJson(res, 400, { ok: false, error: "userExternalId is required" });
+    return null;
+  }
+  return userExternalId;
 }
 
 function dashboardHtml(): string {
@@ -445,7 +546,7 @@ function dashboardHtml(): string {
             </div>
             <div class="field auto">
               <label>User ID</label>
-              <input id="userId" type="text" value="demo-user" />
+              <input id="userId" type="text" value="" placeholder="Enter user id" />
             </div>
             <div class="field auto" style="justify-content: flex-end;">
               <label>&nbsp;</label>
@@ -610,8 +711,16 @@ function dashboardHtml(): string {
     else localStorage.removeItem('dashboardUserId');
   });
 
-  function userId() { return userIdInput.value || 'demo-user'; }
+  function userId() { return userIdInput.value.trim(); }
   function getToken() { return tokenInput.value.trim(); }
+  function requireUserId() {
+    const uid = userId();
+    if (!uid) {
+      setStatus('User ID is required.', true);
+      return null;
+    }
+    return uid;
+  }
 
   let cachedTodos = [];
   let cachedReminders = [];
@@ -777,6 +886,8 @@ function dashboardHtml(): string {
 
   async function reloadAll() {
     try {
+      const uid = userId();
+      if (!uid) return setStatus('User ID is required.', true);
       setStatus('Loading...');
       await Promise.all([loadTodos(), loadReminders()]);
       setStatus('System Status: READY');
@@ -796,8 +907,10 @@ function dashboardHtml(): string {
       const notes = document.getElementById('todoNotes').value.trim();
       const priority = document.getElementById('todoPriority').value;
       const due = document.getElementById('todoDue').value;
+      const uid = requireUserId();
+      if (!uid) return;
       if (!title) return setStatus('Title is required.', true);
-      const body = { title, userExternalId: userId(), priority };
+      const body = { title, userExternalId: uid, priority };
       if (notes) body.notes = notes;
       if (due) body.dueAt = new Date(due).toISOString();
       await api('/api/todos', { method: 'POST', body: JSON.stringify(body) });
@@ -815,9 +928,11 @@ function dashboardHtml(): string {
     try {
       const text = document.getElementById('reminderText').value.trim();
       const time = document.getElementById('reminderTime').value;
+      const uid = requireUserId();
+      if (!uid) return;
       if (!text) return setStatus('Text is required.', true);
       if (!time) return setStatus('Remind time is required.', true);
-      const body = { text, remindAt: new Date(time).toISOString(), userExternalId: userId() };
+      const body = { text, remindAt: new Date(time).toISOString(), userExternalId: uid };
       await api('/api/reminders', { method: 'POST', body: JSON.stringify(body) });
       document.getElementById('reminderText').value = '';
       document.getElementById('reminderTime').value = '';
@@ -834,11 +949,13 @@ function dashboardHtml(): string {
     e.preventDefault();
     const id = parseInt(btn.dataset.id, 10);
     try {
+      const uid = requireUserId();
+      if (!uid) return;
       if (btn.dataset.action === 'completeTodo') {
-        await api('/api/todos/' + id + '/complete', { method: 'POST', body: JSON.stringify({ userExternalId: userId() }) });
+        await api('/api/todos/' + id + '/complete', { method: 'POST', body: JSON.stringify({ userExternalId: uid }) });
         setStatus('Todo #' + id + ' completed!');
       } else if (btn.dataset.action === 'cancelTodo') {
-        await api('/api/todos/' + id + '/cancel', { method: 'POST', body: JSON.stringify({ userExternalId: userId() }) });
+        await api('/api/todos/' + id + '/cancel', { method: 'POST', body: JSON.stringify({ userExternalId: uid }) });
         setStatus('Todo #' + id + ' cancelled.');
       } else if (btn.dataset.action === 'saveTodo') {
         const row = btn.closest('tr');
@@ -848,7 +965,7 @@ function dashboardHtml(): string {
         const priority = row.querySelector('.todo-priority')?.value;
         const dueValue = row.querySelector('.todo-due')?.value ?? '';
 
-        const body = { userExternalId: userId(), title, priority };
+        const body = { userExternalId: uid, title, priority };
 
         if (notesValue.trim().length === 0) {
           body.clearNotes = true;
@@ -866,7 +983,7 @@ function dashboardHtml(): string {
         await api('/api/todos/' + id, { method: 'PATCH', body: JSON.stringify(body) });
         setStatus('Todo #' + id + ' updated.');
       } else if (btn.dataset.action === 'cancelReminder') {
-        await api('/api/reminders/' + id + '/cancel', { method: 'POST', body: JSON.stringify({ userExternalId: userId() }) });
+        await api('/api/reminders/' + id + '/cancel', { method: 'POST', body: JSON.stringify({ userExternalId: uid }) });
         setStatus('Reminder #' + id + ' cancelled.');
       }
       await reloadAll();
@@ -965,7 +1082,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/memory") {
-      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId(url.searchParams.get("userExternalId"), res);
+      if (!userExternalId) return;
       const category = normalizeOptionalString(url.searchParams.get("category"));
       const key = normalizeOptionalString(url.searchParams.get("key"));
       const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
@@ -981,8 +1099,8 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/memory") {
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
       const key = normalizeOptionalString((body as { key?: unknown }).key) ?? randomUUID();
       const category = normalizeOptionalString((body as { category?: unknown }).category);
       const value = (body as { value?: unknown; text?: unknown }).value ?? (body as { text?: unknown }).text;
@@ -1002,14 +1120,15 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: "key is required" });
       }
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
       const deleted = backbone.memoryService.deleteUserMemory(userExternalId, key);
       return sendJson(res, 200, { ok: true, key, deleted });
     }
 
     if (req.method === "GET" && url.pathname === "/api/todos") {
-      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId(url.searchParams.get("userExternalId"), res);
+      if (!userExternalId) return;
       const status = url.searchParams.get("status") || undefined;
       const dueBefore = normalizeOptionalString(url.searchParams.get("dueBefore"));
       const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
@@ -1023,7 +1142,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/todos/search") {
-      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId(url.searchParams.get("userExternalId"), res);
+      if (!userExternalId) return;
       const query = normalizeOptionalString(url.searchParams.get("query"));
       const includeDone = (url.searchParams.get("includeDone") ?? "true").toLowerCase() !== "false";
       const includeCancelled = (url.searchParams.get("includeCancelled") ?? "false").toLowerCase() === "true";
@@ -1047,7 +1167,8 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/todos/by-day") {
       const day = normalizeOptionalString(url.searchParams.get("day"));
       const timezone = normalizeOptionalString(url.searchParams.get("timezone"));
-      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId(url.searchParams.get("userExternalId"), res);
+      if (!userExternalId) return;
       const status = url.searchParams.get("status") || undefined;
       const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
       const range = resolveDayRange({ day, timezone });
@@ -1077,15 +1198,16 @@ const server = createServer(async (req, res) => {
     const todoGet = req.method === "GET" ? url.pathname.match(/^\/api\/todos\/(\d+)$/) : null;
     if (todoGet) {
       const todoId = Number(todoGet[1]);
-      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId(url.searchParams.get("userExternalId"), res);
+      if (!userExternalId) return;
       const todo = backbone.todoService.getTodoById(userExternalId, todoId);
       return sendJson(res, 200, { ok: true, todo });
     }
 
     if (req.method === "POST" && url.pathname === "/api/todos") {
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
       const todo = backbone.todoService.addTodo({
         userExternalId,
         title: normalizeOptionalString((body as { title?: unknown }).title) ?? "",
@@ -1103,7 +1225,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/reminders") {
-      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId(url.searchParams.get("userExternalId"), res);
+      if (!userExternalId) return;
       const status = url.searchParams.get("status") || undefined;
       const todoId = Number.parseInt(url.searchParams.get("todoId") ?? "", 10);
       const from = normalizeOptionalString(url.searchParams.get("from"));
@@ -1121,7 +1244,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/reminders/due") {
-      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId(url.searchParams.get("userExternalId"), res);
+      if (!userExternalId) return;
       const asOf = normalizeOptionalString(url.searchParams.get("asOf")) ?? new Date().toISOString();
       const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
       const reminders = backbone.reminderService.listDueReminders({ userExternalId, asOf, limit });
@@ -1131,7 +1255,8 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/reminders/by-day") {
       const day = normalizeOptionalString(url.searchParams.get("day"));
       const timezone = normalizeOptionalString(url.searchParams.get("timezone"));
-      const userExternalId = url.searchParams.get("userExternalId") ?? DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId(url.searchParams.get("userExternalId"), res);
+      if (!userExternalId) return;
       const status = url.searchParams.get("status") || undefined;
       const todoId = Number.parseInt(url.searchParams.get("todoId") ?? "", 10);
       const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200;
@@ -1161,8 +1286,8 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/reminders") {
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
       const remindAtDirect = normalizeOptionalString((body as { remindAt?: unknown }).remindAt);
       const timeExpression = normalizeOptionalString((body as { timeExpression?: unknown }).timeExpression);
       const offsetMinutesFromNow =
@@ -1236,8 +1361,8 @@ const server = createServer(async (req, res) => {
     if (todoPatch) {
       const todoId = Number(todoPatch[1]);
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
 
       const updated = backbone.todoService.updateTodo({
         userExternalId,
@@ -1261,8 +1386,8 @@ const server = createServer(async (req, res) => {
     if (todoComplete) {
       const todoId = Number(todoComplete[1]);
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
       const updated = backbone.todoService.completeTodo({ userExternalId, todoId });
       return sendJson(res, 200, { ok: true, todo: updated });
     }
@@ -1271,8 +1396,8 @@ const server = createServer(async (req, res) => {
     if (todoCancel) {
       const todoId = Number(todoCancel[1]);
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
       const updated = backbone.todoService.cancelTodo({ userExternalId, todoId });
       return sendJson(res, 200, { ok: true, todo: updated });
     }
@@ -1281,8 +1406,8 @@ const server = createServer(async (req, res) => {
     if (reminderPatch) {
       const reminderId = Number(reminderPatch[1]);
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
 
       const updated = backbone.reminderService.updateReminder({
         userExternalId,
@@ -1300,8 +1425,8 @@ const server = createServer(async (req, res) => {
     if (reminderCancel) {
       const reminderId = Number(reminderCancel[1]);
       const body = await readJsonBody(req);
-      const userExternalId = normalizeOptionalString((body as { userExternalId?: unknown }).userExternalId) ??
-        DEFAULT_USER_EXTERNAL_ID;
+      const userExternalId = requireUserExternalId((body as { userExternalId?: unknown }).userExternalId, res);
+      if (!userExternalId) return;
       const updated = backbone.reminderService.cancelReminder({ userExternalId, reminderId });
       return sendJson(res, 200, { ok: true, reminder: updated });
     }
@@ -1319,14 +1444,40 @@ server.listen(PORT, HOST, () => {
   } else {
     console.log("Dashboard auth disabled (set DASHBOARD_TOKEN to secure it).");
   }
+
+  if (REMINDER_WEBHOOK_URL && REMINDER_WEBHOOK_SECRET) {
+    dispatchDueReminders().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[reminder webhook] initial dispatch error ${message}`);
+    });
+    reminderDispatchInterval = setInterval(() => {
+      dispatchDueReminders().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[reminder webhook] dispatch error ${message}`);
+      });
+    }, REMINDER_POLL_SECONDS * 1000);
+    console.log(
+      `Reminder webhook dispatch active (poll every ${REMINDER_POLL_SECONDS}s, url=${REMINDER_WEBHOOK_URL}).`,
+    );
+  } else {
+    console.log("Reminder webhook dispatch disabled (set REMINDER_WEBHOOK_URL and REMINDER_WEBHOOK_SECRET).");
+  }
 });
 
 process.on("SIGINT", () => {
+  if (reminderDispatchInterval) {
+    clearInterval(reminderDispatchInterval);
+    reminderDispatchInterval = null;
+  }
   backbone.close();
   server.close(() => process.exit(0));
 });
 
 process.on("SIGTERM", () => {
+  if (reminderDispatchInterval) {
+    clearInterval(reminderDispatchInterval);
+    reminderDispatchInterval = null;
+  }
   backbone.close();
   server.close(() => process.exit(0));
 });

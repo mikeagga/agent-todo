@@ -10,23 +10,20 @@
     "db:init": "tsx src/scripts/init-db.ts",
     "extension:sync": "tsx src/scripts/sync-pi-extension.ts",
     "demo": "tsx src/demo.ts",
-    "telegram:bot": "tsx src/telegram/bot.ts",
     "dashboard": "tsx src/web/dashboard-server.ts",
-    "start:all": "npm run db:init && npm run extension:sync && npm run telegram:bot & npm run dashboard"
+    "start:all": "npm run db:init && npm run extension:sync && npm run dashboard"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "chrono-node": "^2.9.0",
     "dotenv": "^16.6.1",
     "luxon": "^3.7.2",
-    "node-telegram-bot-api": "^0.66.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/luxon": "^3.7.1",
     "@types/node": "^24.6.0",
-    "@types/node-telegram-bot-api": "^0.64.9",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }

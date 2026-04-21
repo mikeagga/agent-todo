@@ -7,6 +7,7 @@ import { MemoryService } from "./services/memory-service.js";
 
 export interface Backbone {
   dbPath: string;
+  db: ReturnType<typeof createDatabase>;
   todoService: TodoService;
   reminderService: ReminderService;
   memoryService: MemoryService;
@@ -24,6 +25,7 @@ export function createBackbone(options: DatabaseOptions = {}): Backbone {
 
   return {
     dbPath,
+    db,
     todoService,
     reminderService,
     memoryService,

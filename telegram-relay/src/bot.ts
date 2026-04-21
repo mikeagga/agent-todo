@@ -1,15 +1,14 @@
 import "dotenv/config";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { DateTime } from "luxon";
 import TelegramBot, { type Message } from "node-telegram-bot-api";
-import { withDefaultTimezone } from "../config.js";
-import { createBackbone } from "../index.js";
-import type { Reminder } from "../models.js";
+import { withDefaultTimezone } from "./config.js";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TELEGRAM_BOT_TOKEN) {
@@ -23,13 +22,12 @@ const PI_MODEL = process.env.PI_MODEL;
 const PI_EXTRA_ARGS = (process.env.PI_EXTRA_ARGS ?? "").trim();
 const PI_PROMPT_PREFIX = (process.env.PI_PROMPT_PREFIX ?? "").trim();
 
-const REMINDER_NOTIFICATIONS_ENABLED = (process.env.REMINDER_NOTIFICATIONS_ENABLED ?? "true").toLowerCase() !== "false";
-const REMINDER_POLL_SECONDS = Number.parseInt(process.env.REMINDER_POLL_SECONDS ?? "30", 10) || 30;
-const REMINDER_USER_EXTERNAL_ID = process.env.TODO_USER_ID ?? "local-user";
 const TELEGRAM_REMINDER_CHAT_ID = process.env.TELEGRAM_REMINDER_CHAT_ID;
-const REMINDER_DISPATCH_STALE_SECONDS = Number.parseInt(process.env.REMINDER_DISPATCH_STALE_SECONDS ?? "120", 10) || 120;
 const REMINDER_SEND_MAX_RETRIES = Number.parseInt(process.env.REMINDER_SEND_MAX_RETRIES ?? "3", 10) || 3;
 const REMINDER_SEND_RETRY_BASE_MS = Number.parseInt(process.env.REMINDER_SEND_RETRY_BASE_MS ?? "1000", 10) || 1000;
+const RELAY_WEBHOOK_PORT = Number.parseInt(process.env.RELAY_WEBHOOK_PORT ?? process.env.PORT ?? "8790", 10) || 8790;
+const RELAY_WEBHOOK_HOST = process.env.RELAY_WEBHOOK_HOST ?? "0.0.0.0";
+const REMINDER_WEBHOOK_SECRET = process.env.REMINDER_WEBHOOK_SECRET?.trim();
 
 const AUTO_PI_SCHEDULES_FILE = path.resolve(process.cwd(), ".pi", "auto-pi-schedules.json");
 const AUTO_PI_DEFAULT_TIMEZONE = withDefaultTimezone(process.env.DEFAULT_TIMEZONE);
@@ -192,10 +190,7 @@ let rpc: PiRpcClient | null = null;
 let rpcIdleTimer: NodeJS.Timeout | null = null;
 let rpcLastActivityAt = Date.now();
 let rpcExpectedExit = false;
-const backbone = createBackbone({ filePath: process.env.DB_PATH });
-let reminderInterval: NodeJS.Timeout | null = null;
-let reminderPollingInFlight = false;
-let reminderChatWarningShown = false;
+let webhookServer: ReturnType<typeof createServer> | null = null;
 
 let queue: Promise<void> = Promise.resolve();
 let autoPiScheduleInterval: NodeJS.Timeout | null = null;
@@ -215,6 +210,21 @@ type AutoPiSchedulesConfig = {
   defaultTimezone: string;
   schedules: AutoPiSchedule[];
   source: string;
+};
+
+type ReminderPayload = {
+  id: number;
+  userExternalId: string;
+  text: string;
+  remindAt: string;
+  timezone?: string | null;
+  todoId?: number | null;
+};
+
+type ReminderWebhookPayload = {
+  event: "reminder_due";
+  sentAt: string;
+  reminders: ReminderPayload[];
 };
 
 function ensureRpc(): PiRpcClient {
@@ -447,7 +457,7 @@ function formatDateTime12h(iso: string, timezone?: string): string {
   }
 }
 
-function formatReminderMessage(reminder: Reminder, nowIso: string): string {
+function formatReminderMessage(reminder: ReminderPayload, nowIso: string): string {
   const when = formatDateTime12h(reminder.remindAt, reminder.timezone);
   const dueMs = Date.parse(reminder.remindAt);
   const nowMs = Date.parse(nowIso);
@@ -456,7 +466,7 @@ function formatReminderMessage(reminder: Reminder, nowIso: string): string {
   return `⏰ Reminder${isLate ? " (late)" : ""}\n${reminder.text}\nWhen: ${when}${reminder.todoId ? `\nTodo: #${reminder.todoId}` : ""}`;
 }
 
-async function sendReminderWithRetry(chatId: number, reminder: Reminder, nowIso: string): Promise<void> {
+async function sendReminderWithRetry(chatId: number, reminder: ReminderPayload, nowIso: string): Promise<void> {
   let attempt = 0;
   let lastError: unknown;
 
@@ -477,66 +487,71 @@ async function sendReminderWithRetry(chatId: number, reminder: Reminder, nowIso:
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-async function pollAndPushDueReminders(): Promise<void> {
-  if (!REMINDER_NOTIFICATIONS_ENABLED || reminderPollingInFlight) return;
+function parseUserExternalIdToChatId(userExternalId: string): number | null {
+  const trimmed = userExternalId.trim();
+  const match = /^(tg|telegram):(.+)$/.exec(trimmed);
+  if (!match) return null;
+  return parseChatId(match[2]);
+}
 
-  const chatId = getReminderChatId();
-  if (chatId === null) {
-    if (!reminderChatWarningShown) {
-      console.warn("Reminder notifications are enabled, but no chat id is configured. Set TELEGRAM_REMINDER_CHAT_ID or TELEGRAM_ALLOWED_CHAT_ID.");
-      reminderChatWarningShown = true;
-    }
+function computeWebhookSignature(rawBody: string, secret: string): string {
+  return `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`;
+}
+
+function hasValidSignature(rawBody: string, signatureHeader?: string | null): boolean {
+  if (!REMINDER_WEBHOOK_SECRET) return false;
+  if (!signatureHeader) return false;
+  const expected = computeWebhookSignature(rawBody, REMINDER_WEBHOOK_SECRET);
+  try {
+    return timingSafeEqual(Buffer.from(signatureHeader), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+function resolveReminderChatId(reminder: ReminderPayload): number | null {
+  return parseUserExternalIdToChatId(reminder.userExternalId);
+}
+
+async function handleReminderWebhook(payload: ReminderWebhookPayload, res: ServerResponse): Promise<void> {
+  if (payload.event !== "reminder_due") {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ ok: false, error: "Unsupported event" }));
     return;
   }
 
-  reminderPollingInFlight = true;
   const nowIso = new Date().toISOString();
-  let fetched = 0;
-  let claimed = 0;
   let sent = 0;
   let failed = 0;
 
-  try {
-    const due = backbone.reminderService.listDueReminders({
-      userExternalId: REMINDER_USER_EXTERNAL_ID,
-      asOf: nowIso,
-      limit: 200,
-    });
-    fetched = due.length;
-
-    for (const reminder of due) {
-      const claimToken = randomUUID();
-      const wasClaimed = backbone.reminderService.claimReminderForDispatch(reminder.id, {
-        claimToken,
-        staleAfterSeconds: REMINDER_DISPATCH_STALE_SECONDS,
-      });
-      if (!wasClaimed) continue;
-
-      claimed += 1;
-
-      try {
-        await sendReminderWithRetry(chatId, reminder, nowIso);
-        backbone.reminderService.markReminderSent(reminder.id);
-        backbone.reminderService.markReminderDispatchSent(reminder.id, claimToken);
-        sent += 1;
-      } catch (error) {
-        failed += 1;
-        const message = error instanceof Error ? error.message : String(error);
-        backbone.reminderService.markReminderDispatchFailed(reminder.id, message, claimToken);
-        console.error(`[reminder dispatcher] send failed reminderId=${reminder.id} error=${message}`);
-      }
+  for (const reminder of payload.reminders ?? []) {
+    const chatId = resolveReminderChatId(reminder);
+    if (chatId === null) {
+      failed += 1;
+      console.warn(`[reminder webhook] no chat id for userExternalId=${reminder.userExternalId}`);
+      continue;
     }
 
-    if (fetched > 0 || failed > 0) {
-      console.log(
-        `[reminder dispatcher] poll due=${fetched} claimed=${claimed} sent=${sent} failed=${failed} user=${REMINDER_USER_EXTERNAL_ID}`,
-      );
+    try {
+      await sendReminderWithRetry(chatId, reminder, nowIso);
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[reminder webhook] send failed reminderId=${reminder.id} error=${message}`);
     }
-  } catch (error) {
-    console.error(`[reminder dispatcher] ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    reminderPollingInFlight = false;
   }
+
+  res.statusCode = 200;
+  res.end(JSON.stringify({ ok: true, sent, failed }));
+}
+
+async function readRawBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function denyUnauthorized(msg: Message): boolean {
@@ -628,18 +643,75 @@ bot.on("message", (msg) => {
     });
 });
 
+function startWebhookServer(): void {
+  webhookServer = createServer(async (req, res) => {
+    try {
+      if (!req.url) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ ok: false, error: "Missing URL" }));
+        return;
+      }
+
+      const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+      if (req.method === "GET" && url.pathname === "/health") {
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/webhook/reminders") {
+        const rawBody = await readRawBody(req);
+        const signature = req.headers["x-reminder-signature"] as string | undefined;
+
+        if (!REMINDER_WEBHOOK_SECRET) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: "REMINDER_WEBHOOK_SECRET not configured" }));
+          return;
+        }
+
+        if (!hasValidSignature(rawBody, signature)) {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ ok: false, error: "Invalid signature" }));
+          return;
+        }
+
+        let payload: ReminderWebhookPayload;
+        try {
+          payload = JSON.parse(rawBody) as ReminderWebhookPayload;
+        } catch {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "Invalid JSON" }));
+          return;
+        }
+
+        res.setHeader("content-type", "application/json; charset=utf-8");
+        await handleReminderWebhook(payload, res);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end(JSON.stringify({ ok: false, error: "Not found" }));
+    } catch (error) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    }
+  });
+
+  webhookServer.listen(RELAY_WEBHOOK_PORT, RELAY_WEBHOOK_HOST, () => {
+    console.log(`Webhook server listening on http://${RELAY_WEBHOOK_HOST}:${RELAY_WEBHOOK_PORT}`);
+  });
+}
+
 async function shutdown() {
   try {
-    if (reminderInterval) {
-      clearInterval(reminderInterval);
-      reminderInterval = null;
-    }
-
     if (autoPiScheduleInterval) {
       clearInterval(autoPiScheduleInterval);
       autoPiScheduleInterval = null;
     }
-
+    if (webhookServer) {
+      webhookServer.close();
+      webhookServer = null;
+    }
   } finally {
     if (rpcIdleTimer) {
       clearTimeout(rpcIdleTimer);
@@ -650,7 +722,6 @@ async function shutdown() {
       rpc.close();
       rpc = null;
     }
-    backbone.close();
   }
 }
 
@@ -665,20 +736,12 @@ process.on("SIGTERM", async () => {
 });
 
 (async () => {
-  console.log("Telegram bot started (relay mode, polling).");
+  console.log("Telegram bot started (relay mode)." );
   console.log(`[pi-rpc] idle restart enabled: ${PI_RPC_IDLE_MINUTES} minute(s)`);
 
-  if (REMINDER_NOTIFICATIONS_ENABLED) {
-    await pollAndPushDueReminders();
-    reminderInterval = setInterval(() => {
-      void pollAndPushDueReminders();
-    }, REMINDER_POLL_SECONDS * 1000);
-
-    console.log(
-      `Reminder dispatcher active (poll every ${REMINDER_POLL_SECONDS}s, user=${REMINDER_USER_EXTERNAL_ID}, chatId=${getReminderChatId() ?? "not-configured"}).`,
-    );
-  } else {
-    console.log("Reminder dispatcher disabled (REMINDER_NOTIFICATIONS_ENABLED=false).");
+  startWebhookServer();
+  if (!REMINDER_WEBHOOK_SECRET) {
+    console.warn("Reminder webhook secret not configured. Incoming reminder webhooks will be rejected.");
   }
 
   if (autoPiScheduleConfig.enabled) {

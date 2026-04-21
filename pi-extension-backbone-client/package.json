@@ -1,0 +1,19 @@
+{
+  "name": "pi-extension-backbone-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.0.0",
+    "@mariozechner/pi-coding-agent": "^0.0.0",
+    "@sinclair/typebox": "^0.34.40"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  }
+}

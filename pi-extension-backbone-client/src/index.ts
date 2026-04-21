@@ -61,7 +61,7 @@ function isValidRecurrenceRule(rule: string): boolean {
   return true;
 }
 
-const defaultUserExternalId = process.env.TODO_USER_ID ?? "local-user";
+const defaultUserExternalId = process.env.TODO_USER_ID?.trim();
 const pendingActionTtlMinutes = Number.parseInt(process.env.PENDING_ACTION_TTL_MINUTES ?? "15", 10) || 15;
 const dashboardPort = process.env.DASHBOARD_PORT ?? process.env.PORT ?? "8787";
 const BACKBONE_API_BASE_URL = (process.env.BACKBONE_API_BASE_URL ?? `http://127.0.0.1:${dashboardPort}`).replace(/\/$/, "");
@@ -119,6 +119,23 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function resolveUserExternalId(
+  userExternalId: string | undefined,
+  actionLabel: string,
+): { ok: true; userExternalId: string } | { ok: false; result: ReturnType<typeof clarification> } {
+  const resolved = userExternalId?.trim() || defaultUserExternalId;
+  if (!resolved) {
+    return {
+      ok: false,
+      result: clarification(`userExternalId is required for ${actionLabel}.`, {
+        responseType: "clarification",
+        field: "userExternalId",
+      }),
+    };
+  }
+  return { ok: true, userExternalId: resolved };
 }
 
 function isIsoDateTime(value: string): boolean {
@@ -340,6 +357,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       source: Type.Optional(Type.String({ description: "Origin tag" })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "add todo");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       let dueAt = params.dueAt;
 
       if (dueAt && !isIsoDateTime(dueAt)) {
@@ -376,7 +397,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       const todoResp = await apiRequest<{ ok: true; todo: Record<string, unknown> }>("/api/todos", {
         method: "POST",
         body: JSON.stringify({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           title: params.title,
           notes: params.notes,
           dueAt,
@@ -417,6 +438,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       clearDueAt: Type.Optional(Type.Boolean({ description: "Set true to remove due date/time" })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "update todo");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       if (params.clearDueAt && (params.dueAt || params.timeExpression)) {
         return clarification("Use either clearDueAt=true OR a new dueAt/timeExpression, not both.", {
           field: "clearDueAt",
@@ -480,7 +505,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       const todoResp = await apiRequest<{ ok: true; todo: Record<string, unknown> }>(`/api/todos/${params.todoId}`, {
         method: "PATCH",
         body: JSON.stringify({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           title: params.title,
           notes: params.notes,
           clearNotes: params.clearNotes,
@@ -516,6 +541,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "list todos by day");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       const range = await resolveDayRangeViaApi({ day: params.day, timezone: params.timezone });
       if (!range.ok) {
         return clarification(`Could not resolve day range. ${range.reason ?? "Unknown reason"}`, {
@@ -527,7 +556,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
 
       const todosResp = await apiRequest<{ ok: true; todos: Array<Record<string, unknown>> }>(
         `/api/todos?${new URLSearchParams({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           ...(params.status ? { status: params.status } : {}),
           ...(range.toUtcIso ? { dueBefore: range.toUtcIso } : {}),
           ...(params.limit ? { limit: String(params.limit) } : {}),
@@ -575,6 +604,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "list todos");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       if (params.dueBefore && !isIsoDateTime(params.dueBefore)) {
         return clarification("What date/time should I use for dueBefore? Please provide ISO format or a clear phrase.", {
           field: "dueBefore",
@@ -584,7 +617,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
 
       const todosResp = await apiRequest<{ ok: true; todos: Array<Record<string, unknown>> }>(
         `/api/todos?${new URLSearchParams({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           ...(params.status ? { status: params.status } : {}),
           ...(params.dueBefore ? { dueBefore: params.dueBefore } : {}),
           ...(params.limit ? { limit: String(params.limit) } : {}),
@@ -625,13 +658,17 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       sort: Type.Optional(StringEnum(["recent", "oldest", "due"] as const)),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "search todos");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       const includeDone = params.includeDone ?? true;
       const includeCancelled = params.includeCancelled ?? false;
       const sort = params.sort ?? "recent";
 
       const todosResp = await apiRequest<{ ok: true; todos: Array<Record<string, unknown>> }>(
         `/api/todos/search?${new URLSearchParams({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           ...(params.query ? { query: params.query } : {}),
           includeDone: String(includeDone),
           includeCancelled: String(includeCancelled),
@@ -680,7 +717,9 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       confirmationToken: Type.Optional(Type.String({ description: "Confirmation token from previous request" })),
     }),
     async execute(_toolCallId, params) {
-      const userExternalId = params.userExternalId ?? defaultUserExternalId;
+      const userGate = resolveUserExternalId(params.userExternalId, "complete todo");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
       const gate = await requireConfirmation({
         userExternalId,
         action: "complete_todo",
@@ -720,7 +759,9 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       confirmationToken: Type.Optional(Type.String({ description: "Confirmation token from previous request" })),
     }),
     async execute(_toolCallId, params) {
-      const userExternalId = params.userExternalId ?? defaultUserExternalId;
+      const userGate = resolveUserExternalId(params.userExternalId, "cancel todo");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
       const gate = await requireConfirmation({
         userExternalId,
         action: "cancel_todo",
@@ -770,6 +811,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       source: Type.Optional(Type.String({ description: "Origin tag" })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "add reminder");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       let remindAt = params.remindAt;
       let timezoneForReminder = params.timezone;
 
@@ -837,7 +882,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       const reminderResp = await apiRequest<{ ok: true; reminder: Record<string, unknown> }>("/api/reminders", {
         method: "POST",
         body: JSON.stringify({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           todoId: params.todoId,
           text: params.text,
           remindAt,
@@ -885,6 +930,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       clearRecurrenceRule: Type.Optional(Type.Boolean({ description: "Set true to remove recurrence" })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "update reminder");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       const modeCount = [params.remindAt ? 1 : 0, params.timeExpression ? 1 : 0, params.offsetMinutesFromNow ? 1 : 0].reduce(
         (sum, n) => sum + n,
         0,
@@ -968,7 +1017,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
         {
           method: "PATCH",
           body: JSON.stringify({
-            userExternalId: params.userExternalId ?? defaultUserExternalId,
+            userExternalId,
             text: params.text,
             remindAt,
             timezone: timezoneForUpdate,
@@ -1012,7 +1061,9 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       source: Type.Optional(Type.String({ description: "Origin tag" })),
     }),
     async execute(_toolCallId, params) {
-      const userExternalId = params.userExternalId ?? defaultUserExternalId;
+      const userGate = resolveUserExternalId(params.userExternalId, "add todo reminder");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
       const todoResp = await apiRequest<{ ok: true; todo: Record<string, unknown> | null }>(
         `/api/todos/${params.todoId}?${new URLSearchParams({ userExternalId }).toString()}`,
       );
@@ -1090,6 +1141,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 200 })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "list due reminders");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       const asOf = params.asOf ?? new Date().toISOString();
       if (!isIsoDateTime(asOf)) {
         return clarification("asOf must be an ISO date-time.", { field: "asOf", received: asOf });
@@ -1097,7 +1152,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
 
       const remindersResp = await apiRequest<{ ok: true; reminders: Array<Record<string, unknown>> }>(
         `/api/reminders/due?${new URLSearchParams({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           asOf,
           ...(params.limit ? { limit: String(params.limit) } : {}),
         }).toString()}`,
@@ -1139,6 +1194,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "list reminders by day");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       const range = await resolveDayRangeViaApi({ day: params.day, timezone: params.timezone });
       if (!range.ok) {
         return clarification(`Could not resolve day range. ${range.reason ?? "Unknown reason"}`, {
@@ -1150,7 +1209,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
 
       const remindersResp = await apiRequest<{ ok: true; reminders: Array<Record<string, unknown>> }>(
         `/api/reminders?${new URLSearchParams({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           ...(params.status ? { status: params.status } : {}),
           ...(params.todoId ? { todoId: String(params.todoId) } : {}),
           ...(range.fromUtcIso ? { from: range.fromUtcIso } : {}),
@@ -1202,6 +1261,10 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "list reminders");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
+
       if (params.from && !isIsoDateTime(params.from)) {
         return clarification("from must be an ISO date-time.", { field: "from", received: params.from });
       }
@@ -1211,7 +1274,7 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
 
       const remindersResp = await apiRequest<{ ok: true; reminders: Array<Record<string, unknown>> }>(
         `/api/reminders?${new URLSearchParams({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           ...(params.status ? { status: params.status } : {}),
           ...(params.todoId ? { todoId: String(params.todoId) } : {}),
           ...(params.from ? { from: params.from } : {}),
@@ -1265,7 +1328,9 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       confirmationToken: Type.Optional(Type.String({ description: "Confirmation token from previous request" })),
     }),
     async execute(_toolCallId, params) {
-      const userExternalId = params.userExternalId ?? defaultUserExternalId;
+      const userGate = resolveUserExternalId(params.userExternalId, "cancel reminder");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
       const gate = await requireConfirmation({
         userExternalId,
         action: "cancel_reminder",
@@ -1303,10 +1368,13 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       category: Type.Optional(Type.String({ description: "Optional category label" })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "remember");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
       const memoryResp = await apiRequest<{ ok: true; memory: Record<string, unknown> }>("/api/memory", {
         method: "POST",
         body: JSON.stringify({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           value: params.text,
           category: params.category,
         }),
@@ -1331,9 +1399,12 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 1000 })),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "recall");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
       const memoryResp = await apiRequest<{ ok: true; memory: Array<Record<string, unknown>> }>(
         `/api/memory?${new URLSearchParams({
-          userExternalId: params.userExternalId ?? defaultUserExternalId,
+          userExternalId,
           ...(params.category ? { category: params.category } : {}),
           ...(params.limit ? { limit: String(params.limit) } : {}),
         }).toString()}`,
@@ -1361,11 +1432,14 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
       key: Type.String({ description: "Memory key to delete" }),
     }),
     async execute(_toolCallId, params) {
+      const userGate = resolveUserExternalId(params.userExternalId, "forget");
+      if (!userGate.ok) return userGate.result;
+      const userExternalId = userGate.userExternalId;
       const forgetResp = await apiRequest<{ ok: true; key: string; deleted: boolean }>(
         `/api/memory/${encodeURIComponent(params.key)}`,
         {
           method: "DELETE",
-          body: JSON.stringify({ userExternalId: params.userExternalId ?? defaultUserExternalId }),
+          body: JSON.stringify({ userExternalId }),
         },
       );
 
@@ -1398,9 +1472,15 @@ export default function todoRemindersExtension(pi: ExtensionAPI) {
   pi.registerCommand("todo-db-health", {
     description: "Check todo/reminder database availability",
     handler: async (_args, ctx) => {
+      const userGate = resolveUserExternalId(undefined, "todo-db-health");
+      if (!userGate.ok) {
+        ctx.ui.notify("todo-reminders API error: userExternalId is required (set TODO_USER_ID).", "error");
+        return;
+      }
+
       try {
         const todosResp = await apiRequest<{ ok: true; todos: Array<Record<string, unknown>> }>(
-          `/api/todos?${new URLSearchParams({ userExternalId: defaultUserExternalId, limit: "1" }).toString()}`,
+          `/api/todos?${new URLSearchParams({ userExternalId: userGate.userExternalId, limit: "1" }).toString()}`,
         );
 
         ctx.ui.notify(
