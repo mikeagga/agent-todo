@@ -570,6 +570,7 @@ function applyPromptPrefix(userPrompt: string): string {
 async function sendTelegramText(chatId: number, text: string): Promise<void> {
   await bot.sendMessage(chatId, text, {
     disable_web_page_preview: true,
+    parse_mode: "HTML",
   });
 }
 
